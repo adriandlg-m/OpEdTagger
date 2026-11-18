@@ -1,0 +1,40 @@
+# Python & Virtual Environments
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# External binaries and heavy plugins (Auto-downloaded on setup)
+plugins/*
+!plugins/.gitkeep
+
+# Temporary archives and folders created during plugin downloads/extractions
+*.zip
+*.7z
+temp_*/
+
+# Working media files (Downloaded templates and generated files)
+template/*
+!template/.gitkeep
+template/**/video_files/
+template/**/songs_files/
+*.wav
+*.webm
+*.mkv
+*.mp4
+
+# Logs and local databases
+audit.log
+database/*
+!database/.gitkeep
+
+# Local user configuration
+config.json
+
+# IDEs and OS metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -12,6 +12,7 @@ from src.analyzer import prepare_song_templates
 from src.downloader import sync_anime_templates
 from src.utils import validate_environment
 from src.processor import process_series_pipeline
+from src.setup_plugins import setup_plugins
 
 console = Console()
 
@@ -22,6 +23,9 @@ def main():
     library_path = Path(cfg["library_path"])
     template_base = Path(cfg["template_path"])
     plugins_path = Path(cfg["plugins_path"])
+
+    # 0. Verificar y auto-instalar plugins y binarios externos si faltan
+    setup_plugins()
 
     validate_environment(cfg, plugins_path, library_path)
 

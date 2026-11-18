@@ -3,7 +3,14 @@ import sys
 import re
 from pathlib import Path
 from datetime import datetime
-from rich.console import Console
+
+try:
+    from rich.console import Console
+except ImportError:
+    class Console:
+        def print(self, *args, **kwargs):
+            print(*args)
+
 from src.mkv_tools import find_mkvpropedit_executable
 
 console = Console()
@@ -11,6 +18,13 @@ console = Console()
 def validate_environment(cfg, plugins_path, library_path):
     errors = []
     
+    # 1. Validar y crear automáticamente la carpeta base de plantillas (template_path)
+    template_path = Path(cfg.get("template_path", "template"))
+    try:
+        template_path.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        errors.append(f"No se pudo crear o acceder a la carpeta de plantillas ({template_path}): {e}")
+
     ffmpeg_dir = plugins_path / "FFMPEG" / "bin"
     ffmpeg_exe = ffmpeg_dir / "ffmpeg.exe"
     ffprobe_exe = ffmpeg_dir / "ffprobe.exe"
