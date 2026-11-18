@@ -10,16 +10,11 @@ from rich.prompt import Prompt
 console = Console()
 
 def sanitize_query_from_folder(folder_name: str) -> str:
-    """Limpia el nombre de la carpeta de Jellyfin (ej. 'DAN DA DAN (2024)') para buscar en la API."""
     clean = re.sub(r'\(\d{4}\)', '', folder_name)
     clean = re.sub(r'\[.*?\]', '', clean)
     return clean.strip()
 
 def download_with_retry(link: str, file_path: Path, headers: dict, max_attempts: int = 3) -> bool:
-    """
-    Intenta descargar o reanudar un archivo webm mediante peticiones con rango HTTP (Range Requests).
-    Si el archivo parcial ya existe en disco, continúa descargando desde el último byte guardado.
-    """
     attempt = 0
     while attempt < max_attempts:
         try:
@@ -27,73 +22,63 @@ def download_with_retry(link: str, file_path: Path, headers: dict, max_attempts:
             req_headers = headers.copy()
             file_size = 0
 
-            # Verificar si existe un archivo parcial para reanudar la descarga
             if file_path.exists():
                 file_size = file_path.stat().st_size
                 req_headers["Range"] = f"bytes={file_size}-"
-                console.print(f"    -> Reanudando descarga (Intento {attempt}/{max_attempts}): {file_path.name} desde el byte {file_size}...")
+                console.print(f"    -> Resuming download (Attempt {attempt}/{max_attempts}): {file_path.name} from byte {file_size}...")
             else:
-                console.print(f"    -> Descargando (Intento {attempt}/{max_attempts}): {file_path.name}...")
+                console.print(f"    -> Downloading (Attempt {attempt}/{max_attempts}): {file_path.name}...")
 
-            # Timeout generoso de 60 segundos para evitar cortes prematuros en archivos pesados
             vid_response = requests.get(link, headers=req_headers, impersonate="chrome120", timeout=60, stream=True)
             
-            # Código 206 = Partial Content (Soporta reanudación por rangos)
-            # Código 200 = OK (El servidor envía el archivo completo desde el inicio)
             if vid_response.status_code == 206:
-                mode = "ab"  # Adjuntar bytes al final del archivo existente
+                mode = "ab"
             elif vid_response.status_code == 200:
-                mode = "wb"  # Sobrescribir desde cero si el servidor no aceptó el rango
+                mode = "wb"
                 file_size = 0
-            elif vid_response.status_code == 416:  # Range Not Satisfiable (el archivo ya está completo)
-                console.print(f"       [green][✔] El archivo ya está completamente descargado.[/green]")
+            elif vid_response.status_code == 416:
+                console.print(f"       [green][✔] The file is already fully downloaded.[/green]")
                 return True
             else:
-                console.print(f"       [yellow]⚠ Error HTTP {vid_response.status_code} en intento {attempt} para {file_path.name}.[/yellow]")
+                console.print(f"       [yellow]⚠ HTTP Error {vid_response.status_code} on attempt {attempt} for {file_path.name}.[/yellow]")
                 if attempt < max_attempts:
                     time.sleep(2 ** attempt)
                 continue
 
-            # Escritura en disco por bloques optimizada
             with open(file_path, mode) as f:
                 for chunk in vid_response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
                         
-            console.print(f"       [green][✔] Descargado/Reanudado con éxito.[/green]")
+            console.print(f"       [green][✔] Downloaded/Resumed successfully.[/green]")
             return True
 
         except Exception as e:
-            console.print(f"       [yellow]⚠ Excepción de red en intento {attempt} para {file_path.name}: {e}[/yellow]")
+            console.print(f"       [yellow]⚠ Network exception on attempt {attempt} for {file_path.name}: {e}[/yellow]")
             
         if attempt < max_attempts:
-            sleep_time = 2 ** attempt  # Backoff exponencial (2s, 4s, 8s...)
-            console.print(f"       [dim]Reintentando en {sleep_time} segundos...[/dim]")
+            sleep_time = 2 ** attempt
+            console.print(f"       [dim]Retrying in {sleep_time} seconds...[/dim]")
             time.sleep(sleep_time)
 
-    # Si se agotan los intentos, se abre menú interactivo de control
     while True:
-        console.print(f"\n[bold yellow]⚠ No se pudo completar '{file_path.name}' tras {max_attempts} intentos.[/bold yellow]")
-        console.print(" [1] Reintentar nuevamente")
-        console.print(" [2] Omitir este archivo y continuar")
-        console.print(" [3] Cancelar el proceso por completo")
+        console.print(f"\n[bold yellow]⚠ Failed to complete '{file_path.name}' after {max_attempts} attempts.[/bold yellow]")
+        console.print(" [1] Retry again")
+        console.print(" [2] Skip this file and continue")
+        console.print(" [3] Cancel the process entirely")
         
-        choice = Prompt.ask("Selecciona una opción", choices=["1", "2", "3"], default="2")
+        choice = Prompt.ask("Select an option", choices=["1", "2", "3"], default="2")
         
         if choice == "1":
             return download_with_retry(link, file_path, headers, max_attempts=max_attempts)
         elif choice == "2":
-            console.print(f"[yellow]⚠ Archivo '{file_path.name}' omitido. Continuando...[/yellow]")
+            console.print(f"[yellow]⚠ File '{file_path.name}' skipped. Continuing...[/yellow]")
             return False
         elif choice == "3":
-            console.print("[red]✖ Operación cancelada por el usuario.[/red]")
-            raise InterruptedError("Proceso cancelado por el usuario debido a fallos de red.")
+            console.print("[red]✖ Operation cancelled by user.[/red]")
+            raise InterruptedError("Process cancelled by user due to network failures.")
 
 def sync_anime_templates(folder_name: str, template_base_path: str = "template") -> bool:
-    """
-    Verifica los temas de la serie en la API de AnimeThemes, descarga los .webm faltantes
-    con reintentos y soporte de reanudación, y los organiza en template/{folder_name}/video_files/.
-    """
     url = "https://rs.animethemes.moe/graphql"
     query_term = sanitize_query_from_folder(folder_name)
     
@@ -104,7 +89,7 @@ def sync_anime_templates(folder_name: str, template_base_path: str = "template")
         "Referer": "https://animethemes.moe/"
     }
     
-    console.print(f"[*] Consultando API de AnimeThemes para '{query_term}'...")
+    console.print(f"[*] Querying AnimeThemes API for '{query_term}'...")
     
     query = """
     query ($searchTerm: String!) {
@@ -144,14 +129,14 @@ def sync_anime_templates(folder_name: str, template_base_path: str = "template")
     try:
         response = requests.post(url, json=payload, headers=headers, impersonate="chrome120")
         if response.status_code != 200:
-            console.print(f"[bold red]✘ Error HTTP {response.status_code} al consultar AnimeThemes.[/bold red]")
+            console.print(f"[bold red]✘ HTTP Error {response.status_code} while querying AnimeThemes.[/bold red]")
             return False
             
         result = response.json()
         anime_list = result.get("data", {}).get("search", {}).get("anime", {}).get("data", [])
         
         if not anime_list:
-            console.print(f"[yellow]⚠ No se encontraron resultados en AnimeThemes para '{query_term}'.[/yellow]")
+            console.print(f"[yellow]⚠ No results found on AnimeThemes for '{query_term}'.[/yellow]")
             return False
             
         query_clean = query_term.replace(" ", "").lower()
@@ -170,10 +155,9 @@ def sync_anime_templates(folder_name: str, template_base_path: str = "template")
         all_ops = []
         all_eds = []
         
-        # Unificar temporadas de la franquicia
         for matched_anime in matched_animes:
             for theme in matched_anime.get("themes", []):
-                theme_type = theme.get("type") # OP o ED
+                theme_type = theme.get("type")
                 
                 best_video = None
                 best_score = -1
@@ -214,10 +198,10 @@ def sync_anime_templates(folder_name: str, template_base_path: str = "template")
             tasks.append((ed["link"], "ED", idx, ed["resolution"]))
             
         if not tasks:
-            console.print(f"[yellow]⚠ No se encontraron temas (OP/ED) en la API para esta serie.[/yellow]")
+            console.print(f"[yellow]⚠ No themes (OP/ED) found in API for this series.[/yellow]")
             return False
             
-        console.print(f"[*] Verificando archivos .webm para '{folder_name}' ({len(tasks)} temas en API)...")
+        console.print(f"[*] Verifying .webm files for '{folder_name}' ({len(tasks)} themes in API)...")
         
         for link, t_type, t_seq, resolution in tasks:
             formatted_filename = f"{folder_name} - {t_type}{t_seq}.webm"
@@ -233,5 +217,5 @@ def sync_anime_templates(folder_name: str, template_base_path: str = "template")
     except InterruptedError:
         raise
     except Exception as e:
-        console.print(f"[bold red]✘ Error durante la sincronización de plantillas: {e}[/bold red]")
+        console.print(f"[bold red]✘ Error during template synchronization: {e}[/bold red]")
         return False

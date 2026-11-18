@@ -18,25 +18,24 @@ console = Console()
 def validate_environment(cfg, plugins_path, library_path):
     errors = []
     
-    # 1. Validar y crear automáticamente la carpeta base de plantillas (template_path)
     template_path = Path(cfg.get("template_path", "template"))
     try:
         template_path.mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        errors.append(f"No se pudo crear o acceder a la carpeta de plantillas ({template_path}): {e}")
+        errors.append(f"Failed to create or access template directory ({template_path}): {e}")
 
     ffmpeg_dir = plugins_path / "FFMPEG" / "bin"
     ffmpeg_exe = ffmpeg_dir / "ffmpeg.exe"
     ffprobe_exe = ffmpeg_dir / "ffprobe.exe"
     
     if not ffmpeg_exe.exists():
-        errors.append(f"No se encontró ffmpeg.exe en: {ffmpeg_exe}")
+        errors.append(f"ffmpeg.exe not found at: {ffmpeg_exe}")
     if not ffprobe_exe.exists():
-        errors.append(f"No se encontró ffprobe.exe en: {ffprobe_exe}")
+        errors.append(f"ffprobe.exe not found at: {ffprobe_exe}")
     
     mkvpropedit_exe = find_mkvpropedit_executable(plugins_path)
     if not mkvpropedit_exe or not mkvpropedit_exe.exists():
-        errors.append("No se encontró mkvpropedit.exe en la carpeta de plugins.")
+        errors.append("mkvpropedit.exe not found in the plugins directory.")
 
     db_dir = Path("database")
     try:
@@ -45,7 +44,7 @@ def validate_environment(cfg, plugins_path, library_path):
         test_file.write_text("test")
         test_file.unlink()
     except Exception as e:
-        errors.append(f"Sin permisos de escritura en la carpeta database/: {e}")
+        errors.append(f"No write permissions in the database/ directory: {e}")
 
     if library_path.exists():
         try:
@@ -53,10 +52,10 @@ def validate_environment(cfg, plugins_path, library_path):
             test_lib_file.write_text("test")
             test_lib_file.unlink()
         except Exception as e:
-            errors.append(f"Advertencia/Error de permisos en la carpeta de biblioteca: {e}")
+            errors.append(f"Permission warning/error in the library directory: {e}")
 
     if errors:
-        console.print("[bold red]✘ Errores críticos de entorno detectados:[/bold red]")
+        console.print("[bold red]✘ Critical environment errors detected:[/bold red]")
         for err in errors:
             console.print(f"  • [red]{err}[/red]")
         sys.exit(1)
@@ -75,7 +74,7 @@ def parse_season_episode(filename: str) -> tuple[int, int] | None:
     patterns = [
         r"[Ss](\d{1,2})[Ee](\d{1,3})",
         r"(\d{1,2})x(\d{1,3})",
-        r"[Tt]emporada\s*(\d{1,2}).*?[Ee]pisodio\s*(\d{1,3})",
+        r"[Ss]eason\s*(\d{1,2}).*?[Ee]pisode\s*(\d{1,3})",
     ]
     for pat in patterns:
         match = re.search(pat, filename)

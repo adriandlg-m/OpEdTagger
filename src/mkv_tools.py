@@ -1,3 +1,4 @@
+# src/mkv_tools.py
 import os
 import random
 import subprocess
@@ -36,13 +37,13 @@ def get_mkv_duration(mkv_path: Path, plugins_path: Path) -> float:
 def apply_mkv_chapters_from_db(mkv_path: Path, episode_db_record: dict, plugins_path: Path) -> tuple[bool, str]:
     mkvpropedit_exe = find_mkvpropedit_executable(plugins_path)
     if not mkvpropedit_exe or not mkvpropedit_exe.exists():
-        return False, "mkvpropedit no hallado en plugins"
+        return False, "mkvpropedit not found in plugins"
 
     op_data = episode_db_record.get("op")
     ed_data = episode_db_record.get("ed")
 
     if not op_data and not ed_data:
-        return False, "Sin datos en DB"
+        return False, "No data in DB"
 
     total_duration = get_mkv_duration(mkv_path, plugins_path)
     raw_chapters = []
@@ -52,7 +53,7 @@ def apply_mkv_chapters_from_db(mkv_path: Path, episode_db_record: dict, plugins_
     ed_start = ed_data["start"] if ed_data else None
 
     if op_start is not None and op_start > 1.0:
-        raw_chapters.append(("Prólogo", 0.0, op_start))
+        raw_chapters.append(("Prologue", 0.0, op_start))
         current_time = op_start
     elif op_start is not None and op_start <= 1.0:
         current_time = 0.0
@@ -60,32 +61,32 @@ def apply_mkv_chapters_from_db(mkv_path: Path, episode_db_record: dict, plugins_
     if op_data:
         start_t = current_time
         if not raw_chapters and start_t > 0.0:
-            raw_chapters.append(("Prólogo", 0.0, op_start))
+            raw_chapters.append(("Prologue", 0.0, op_start))
             start_t = op_start
         raw_chapters.append((op_data["name"], start_t, op_data["end"]))
         current_time = op_data["end"]
 
     if ed_start is not None:
         if current_time < ed_start:
-            raw_chapters.append(("Episodio", current_time, ed_start))
+            raw_chapters.append(("Episode", current_time, ed_start))
             current_time = ed_start
     else:
         if current_time < total_duration:
-            raw_chapters.append(("Episodio", current_time, total_duration))
+            raw_chapters.append(("Episode", current_time, total_duration))
             current_time = total_duration
 
     if ed_data:
         start_t = ed_data["start"]
         if start_t > current_time:
-            raw_chapters.append(("Episodio", current_time, start_t))
+            raw_chapters.append(("Episode", current_time, start_t))
         raw_chapters.append((ed_data["name"], start_t, ed_data["end"]))
         current_time = ed_data["end"]
 
     if current_time < total_duration - 1.0:
-        raw_chapters.append(("Cierre", current_time, total_duration))
+        raw_chapters.append(("Ending", current_time, total_duration))
 
     if not raw_chapters:
-        return False, "Sin capítulos válidos"
+        return False, "No valid chapters"
 
     edition_uid = random.randint(1000000000000000000, 9999999999999999999)
     xml_content = '<?xml version="1.0"?>\n'
@@ -110,24 +111,3 @@ def apply_mkv_chapters_from_db(mkv_path: Path, episode_db_record: dict, plugins_
         xml_content += f'        <ChapLanguageIETF>es</ChapLanguageIETF>\n'
         xml_content += f'      </ChapterDisplay>\n'
         xml_content += f'    </ChapterAtom>\n'
-
-    xml_content += '  </EditionEntry>\n'
-    xml_content += '</Chapters>'
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False, encoding="utf-8") as tmp_xml:
-        tmp_xml.write(xml_content)
-        tmp_xml_path = tmp_xml.name
-
-    try:
-        cmd = [str(mkvpropedit_exe), str(mkv_path), "--chapters", tmp_xml_path]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if result.returncode == 0:
-            return True, "OK"
-        else:
-            err_msg = result.stderr.strip() or result.stdout.strip() or "Error desconocido"
-            return False, err_msg
-    except Exception as e:
-        return False, str(e)
-    finally:
-        if os.path.exists(tmp_xml_path):
-            os.remove(tmp_xml_path)

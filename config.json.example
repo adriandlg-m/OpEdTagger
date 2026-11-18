@@ -1,5 +1,5 @@
 {
-  "library_path": "C:/Path/To/Your/Jellyfin/Animes",
+  "library_path": "C:/Path/To/Your/Library",
   "template_path": "./template",
   "plugins_path": "./plugins",
   "database_path": "./database"

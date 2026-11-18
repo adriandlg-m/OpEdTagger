@@ -1,3 +1,4 @@
+# src/setup_plugins.py
 import os
 import sys
 import shutil
@@ -12,17 +13,14 @@ from rich.text import Text
 
 console = Console()
 
-# Directorios del proyecto
 PLUGINS_DIR = Path("plugins")
 FFMPEG_BIN_DIR = PLUGINS_DIR / "FFMPeg" / "bin"
 
-# URLs de descarga oficial
 FPCALC_URL = "https://github.com/acoustid/chromaprint/releases/download/v1.5.1/chromaprint-fpcalc-1.5.1-windows-x86_64.zip"
 MKVTOOLNIX_URL = "https://mkvtoolnix.download/windows/releases/82.0/mkvtoolnix-64-bit-82.0.7z"
 FFMPEG_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 
 def download_with_progress(url: str, dest_path: Path, description: str):
-    """Descarga un archivo mostrando una barra de progreso elegante con rich."""
     PLUGINS_DIR.mkdir(exist_ok=True)
     
     with urllib.request.urlopen(url) as response:
@@ -49,7 +47,6 @@ def download_with_progress(url: str, dest_path: Path, description: str):
                     progress.update(task, advance=len(chunk))
 
 def setup_plugins():
-    # Banner inicial estético
     console.print(Panel.fit(
         Text("OpEdTagger • Environment & Plugin Initializer", justify="center", style="bold magenta"),
         border_style="cyan"
@@ -58,21 +55,18 @@ def setup_plugins():
     PLUGINS_DIR.mkdir(exist_ok=True)
     FFMPEG_BIN_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Definir qué herramientas faltan
     fpcalc_path = PLUGINS_DIR / "fpcalc.exe"
     mkv_tools = {"mkvmerge.exe", "mkvextract.exe", "mkvinfo.exe", "mkvpropedit.exe"}
     missing_mkv = [t for t in mkv_tools if not (PLUGINS_DIR / t).exists()]
     ffmpeg_binaries = {"ffmpeg.exe", "ffprobe.exe", "ffplay.exe"}
     missing_ffmpeg = [b for b in ffmpeg_binaries if not (FFMPEG_BIN_DIR / b).exists()]
 
-    # Si todo ya está instalado, informar de forma limpia
     if fpcalc_path.exists() and not missing_mkv and not missing_ffmpeg:
         console.print("[green]✔[/green] [bold]All binary dependencies and plugins are correctly installed![/bold]\n")
         return
 
     console.print("[yellow]⚡ Some required binary tools are missing. Preparing automatic setup...[/yellow]\n")
 
-    # 1. Instalar fpcalc si falta
     if not fpcalc_path.exists():
         zip_path = PLUGINS_DIR / "fpcalc.zip"
         download_with_progress(FPCALC_URL, zip_path, "Downloading fpcalc (Chromaprint)...")
@@ -88,7 +82,6 @@ def setup_plugins():
             zip_path.unlink()
         console.print("[green]  -> fpcalc.exe installed successfully.[/green]\n")
 
-    # 2. Instalar MKVToolNix si falta alguno
     if missing_mkv:
         archive_path = PLUGINS_DIR / "mkvtoolnix.7z"
         download_with_progress(MKVTOOLNIX_URL, archive_path, "Downloading MKVToolNix suite...")
@@ -105,9 +98,8 @@ def setup_plugins():
         shutil.rmtree(PLUGINS_DIR / "temp_mkv", ignore_errors=True)
         if archive_path.exists():
             archive_path.unlink()
-        console.print("[green]  -> MKVToolNix tools installed successfully.[/green]\n")
+        console.print("[green]  -> MKVToolNix tools installed successfully.[/green]\033[0m\n")
 
-    # 3. Instalar FFmpeg si falta alguno
     if missing_ffmpeg:
         ffmpeg_zip = PLUGINS_DIR / "ffmpeg.zip"
         download_with_progress(FFMPEG_URL, ffmpeg_zip, "Downloading FFmpeg binaries...")

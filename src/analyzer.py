@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.prompt import Confirm
 
 console = Console()
-COSINE_SIMILARITY_THRESHOLD = 0.68  # Umbral base de similitud optimizado
+COSINE_SIMILARITY_THRESHOLD = 0.68
 
 def prepare_song_templates(series_template_dir: Path, plugins_path: Path) -> list[Path]:
     video_files_dir = series_template_dir / "video_files"
@@ -30,19 +30,19 @@ def prepare_song_templates(series_template_dir: Path, plugins_path: Path) -> lis
     if not video_files:
         return []
 
-    console.print(f"\n[yellow]⚠ No se encontraron archivos .wav en: [bold]{songs_files_dir}[/bold][/yellow]")
-    console.print(f"[cyan]Se detectaron [{len(video_files)}] archivos de video en [bold]{video_files_dir}[/bold].[/cyan]")
+    console.print(f"\n[yellow]⚠ No .wav files found in: [bold]{songs_files_dir}[/bold][/yellow]")
+    console.print(f"[cyan]Detected [{len(video_files)}] video files in [bold]{video_files_dir}[/bold].[/cyan]")
     
-    if not Confirm.ask("¿Deseas procesar los archivos de video para generar las plantillas .wav en songs_files?", default=True):
-        console.print("[dim]Conversión omitida por el usuario.[/dim]")
+    if not Confirm.ask("Do you want to process the video files to generate .wav templates in songs_files?", default=True):
+        console.print("[dim]Conversion skipped by user.[/dim]")
         return []
 
     ffmpeg_exe = plugins_path / "FFMPEG" / "bin" / "ffmpeg.exe"
     if not ffmpeg_exe.exists():
-        console.print(f"[bold red]✘ No se encontró ffmpeg.exe en: {ffmpeg_exe}[/bold red]")
+        console.print(f"[bold red]✘ ffmpeg.exe not found at: {ffmpeg_exe}[/bold red]")
         return []
 
-    console.print("[cyan]⚙ Extrayendo y convirtiendo pistas de audio a formato .wav...[/cyan]")
+    console.print("[cyan]⚙ Extracting and converting audio tracks to .wav format...[/cyan]")
     for vid in video_files:
         expected_wav = songs_files_dir / f"{vid.stem}.wav"
         if not expected_wav.exists():
@@ -52,7 +52,7 @@ def prepare_song_templates(series_template_dir: Path, plugins_path: Path) -> lis
                 str(expected_wav)
             ]
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            console.print(f"  [green]✔ Generado:[/green] {expected_wav.name}")
+            console.print(f"  [green]✔ Generated:[/green] {expected_wav.name}")
 
     return sorted(list(songs_files_dir.glob("*.wav")))
 
@@ -123,8 +123,6 @@ def evaluate_episode_templates(episode_path: Path, wav_templates: list, plugins_
                 is_op = "op" in tmpl.stem.lower()
                 is_ed = "ed" in tmpl.stem.lower()
 
-                # REGLA DE SANIDAD TEMPORAL BLINDADA:
-                # Un Ending jamás debe empezar antes del último 30% del episodio (evita falsos positivos a mitad de capítulo).
                 if is_ed and episode_duration > 0 and start_time < (episode_duration * 0.70):
                     continue
 

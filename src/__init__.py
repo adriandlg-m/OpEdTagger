@@ -1,5 +1,6 @@
+# src/__init__.py
 """
-OpEdTagger - Paquete principal de análisis de audio y etiquetado de capítulos para MKV.
+OpEdTagger - Main audio analysis and MKV chapter tagging package.
 """
 
 from .config import load_config
