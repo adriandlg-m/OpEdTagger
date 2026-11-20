@@ -1,4 +1,4 @@
-# src/ui.py
+# cli/ui.py
 import re
 from rich.table import Table
 
