@@ -1,0 +1,92 @@
+/* ============================================
+   OpEdTagger — Design Tokens
+   Default theme: Mate
+============================================ */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #080b14;
+  --bg-deep: #060911;
+  --sidebar: #0b101e;
+
+  --surface: #0e1424;
+  --surface-2: #121a2e;
+  --surface-3: #18223b;
+  --surface-hover: #151f36;
+
+  --border: #1e2942;
+  --border-soft: rgba(148, 163, 184, .09);
+
+  --text: #f1f5ff;
+  --text-2: #a3b0c9;
+  --muted: #6c7993;
+
+  --accent: #7c6df7;
+  --accent-strong: #6757e6;
+  --accent-soft: rgba(124, 109, 247, .16);
+
+  --success: #22c58b;
+  --success-soft: rgba(34, 197, 139, .14);
+
+  --warning: #eab308;
+  --warning-soft: rgba(234, 179, 8, .14);
+
+  --danger: #f43f5e;
+  --danger-soft: rgba(244, 63, 94, .14);
+
+  --info: #38bdf8;
+  --info-soft: rgba(56, 189, 248, .14);
+
+  --shadow: 0 18px 46px rgba(0, 0, 0, .42);
+
+  /* Series artwork banner: stronger in dark mode without competing with text. */
+  --series-banner-opacity: .28;
+  --series-banner-brightness: .78;
+}
+
+/* ============================================
+   Theme: Claro suave
+============================================ */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f1f4f8;
+  --bg-deep: #e6ebf2;
+  --sidebar: #f8fafc;
+
+  --surface: #ffffff;
+  --surface-2: #f4f7fb;
+  --surface-3: #e8eef5;
+  --surface-hover: rgba(15, 23, 42, 0.04);
+
+  --border: rgba(15, 23, 42, 0.10);
+  --border-soft: rgba(15, 23, 42, 0.06);
+
+  --text: #162032;
+  --text-2: #475569;
+  --muted: #64748b;
+
+  --accent: #6758de;
+  --accent-strong: #5849c7;
+  --accent-soft: rgba(103, 88, 222, 0.12);
+
+  --success: #059669;
+  --success-soft: rgba(5, 150, 105, 0.12);
+
+  --warning: #d97706;
+  --warning-soft: rgba(217, 119, 6, 0.12);
+
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.12);
+
+  --info: #0284c7;
+  --info-soft: rgba(2, 132, 199, 0.12);
+
+  --shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
+
+  /* A little more image presence is needed against the light surface. */
+  --series-banner-opacity: .21;
+  --series-banner-brightness: .96;
+}

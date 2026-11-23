@@ -1,0 +1,10 @@
+{
+  "library_path": "",
+  "template_path": "<application-data>/templates",
+  "plugins_path": "<application-data>/plugins",
+  "database_path": "<application-data>/opedtagger.sqlite3",
+  "backup_path": "<application-data>/backups",
+  "log_path": "<application-data>/logs/opedtagger.log",
+  "max_workers": 1,
+  "auto_download_templates": false
+}

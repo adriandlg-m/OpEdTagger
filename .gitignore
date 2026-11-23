@@ -1,40 +1,50 @@
-# Python & Virtual Environments
-__pycache__/
-*.pyc
-*.pyo
+# Python environments and generated files
 .venv/
 venv/
-env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 
-# External binaries and heavy plugins (Auto-downloaded on setup)
-plugins/*
-!plugins/.gitkeep
+# Node / Vite
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+dist/
 
-# Temporary archives and folders created during plugin downloads/extractions
-*.zip
-*.7z
-temp_*/
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
 
-# Working media files (Downloaded templates and generated files)
-template/*
-!template/.gitkeep
-template/**/video_files/
-template/**/songs_files/
-*.wav
-*.webm
-*.mkv
-*.mp4
+# Local application configuration and data
+config/config.json
+var/
+/database/
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+*.db-*
+*.log
+*.log.*
+*.pre-migration.bak
 
-# Logs and local databases
-audit.log
-database/*
-!database/.gitkeep
+# Personal legacy-library exports
+migration/*.legacy.json
+migration/local/*
+!migration/local/.gitkeep
 
-# Local user configuration
-config.json
-
-# IDEs and OS metadata
-.vscode/
-.idea/
+# OS / editor files
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
