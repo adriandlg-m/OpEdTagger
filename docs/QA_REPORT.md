@@ -55,7 +55,7 @@ La rama `feature/recover-cli-workflows` incorpora nuevas pruebas para:
 - La extracción segura de ZIP y la recuperación de carpetas de plugins tras una interrupción.
 - Los nombres de capítulos históricos y el idioma `spa/es`, manteniendo backup, verificación y rollback.
 
-**Estado de esta rama:** en el commit `176835b` el workflow de GitHub Actions completó correctamente `compileall`, `pytest` (72 pruebas), `npm test` y `npm run build`. La instalación real de herramientas, las descargas externas y la inyección sobre archivos MKV deben validarse además en Windows; no se simulan como pruebas de producción.
+**Estado de esta rama:** en el commit `082cbb7` el workflow de GitHub Actions completó correctamente `compileall`, `pytest` (72 pruebas), `npm test` y `npm run build`. La instalación real de herramientas, las descargas externas y la inyección sobre archivos MKV deben validarse además en Windows; no se simulan como pruebas de producción.
 
 
 ## Comprobaciones pendientes
