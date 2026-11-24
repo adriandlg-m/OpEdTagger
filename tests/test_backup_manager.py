@@ -169,3 +169,22 @@ def test_restore_recovery_backup_keeps_backup_when_episode_update_fails(tmp_path
     assert target.read_bytes() == b"original"
     assert recovery.is_dir()
     assert (recovery / "original.mkv").read_bytes() == b"original"
+
+
+
+def test_reconcile_retries_database_committed_cleanup_after_interruption(tmp_path):
+    temporary = _write_transaction(
+        tmp_path / "backups", "db-committed", "DATABASE_COMMITTED", 4
+    )
+    states = {}
+
+    result = media_tools.reconcile_backup_transactions(
+        tmp_path / "backups",
+        lambda _episode_id: "SUCCEEDED",
+        lambda episode_id, status, error: states.update({episode_id: (status, error)}),
+    )
+
+    assert result["finalized"] == 1
+    assert not temporary.exists()
+    assert list((tmp_path / "backups" / "temporary").iterdir()) == []
+    assert states == {}

@@ -426,6 +426,7 @@ def reconcile_backup_transactions(
     for transaction_dir in list(directories["temporary"].iterdir()):
         if not transaction_dir.is_dir() or transaction_dir.is_symlink():
             continue
+        episode_id = None
         try:
             manifest = json.loads((transaction_dir / "manifest.json").read_text(encoding="utf-8"))
             phase = manifest.get("phase")
@@ -440,9 +441,8 @@ def reconcile_backup_transactions(
                     )
                 summary["removed_incomplete"] += 1
                 continue
-            episode_id = manifest.get("episode_id")
             state = get_episode_injection_status(int(episode_id)) if episode_id is not None else None
-            if phase == "VERIFIED" and state == "SUCCEEDED":
+            if phase in {"VERIFIED", "DATABASE_COMMITTED"} and state == "SUCCEEDED":
                 finalize_injection_transaction({"transaction_path": str(transaction_dir)})
                 summary["finalized"] += 1
             else:
@@ -461,7 +461,7 @@ def reconcile_backup_transactions(
                     )
                 summary["moved_to_recovery"] += 1
         except Exception as exc:
-            if 'episode_id' in locals() and episode_id is not None and set_episode_injection_status is not None:
+            if episode_id is not None and set_episode_injection_status is not None:
                 try:
                     set_episode_injection_status(
                         int(episode_id),
