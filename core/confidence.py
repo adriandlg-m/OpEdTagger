@@ -29,6 +29,7 @@ def assess_segment(segment: dict | None, *, temporal_consistency: float | None =
     result = dict(segment)
     similarity = _unit_interval(result.get("similarity_score"))
     prominence = _unit_interval(result.get("peak_prominence"))
+    template_margin = _unit_interval(result.get("template_margin"))
     consistency = _unit_interval(temporal_consistency)
 
     if similarity is None or prominence is None:
@@ -38,6 +39,7 @@ def assess_segment(segment: dict | None, *, temporal_consistency: float | None =
             "confidence_factors": {
                 "similarity": similarity,
                 "peak_clarity": prominence,
+                "template_margin": template_margin,
                 "temporal_consistency": consistency,
                 "model_version": CONFIDENCE_MODEL_VERSION,
                 "reasons": [
@@ -48,10 +50,18 @@ def assess_segment(segment: dict | None, *, temporal_consistency: float | None =
         })
         return result
 
-    if consistency is None:
-        score_value = 0.65 * similarity + 0.35 * prominence
-    else:
-        score_value = 0.50 * similarity + 0.25 * prominence + 0.25 * consistency
+    # Average only the evidence that exists. A single search result does not
+    # create an artificial "perfect" margin against alternatives that were never
+    # available; its weight is simply omitted and the remaining factors normalize.
+    weighted_factors = [
+        (similarity, 0.50),
+        (prominence, 0.25),
+        (template_margin, 0.15),
+        (consistency, 0.10),
+    ]
+    available = [(value, weight) for value, weight in weighted_factors if value is not None]
+    total_weight = sum(weight for _value, weight in available)
+    score_value = sum(value * weight for value, weight in available) / total_weight
     if anomalous:
         score_value = min(score_value, 0.69)
 
@@ -63,6 +73,10 @@ def assess_segment(segment: dict | None, *, temporal_consistency: float | None =
         f"Similitud normalizada: {similarity:.3f}.",
         f"Claridad del pico: {prominence:.3f}.",
     ]
+    if template_margin is not None:
+        reasons.append(f"Separación frente a otros templates: {template_margin:.3f}.")
+    else:
+        reasons.append("No hay otro template candidato comparable para medir ambigüedad.")
     if consistency is not None:
         reasons.append(f"Consistencia temporal: {consistency:.3f}.")
     else:
@@ -76,6 +90,7 @@ def assess_segment(segment: dict | None, *, temporal_consistency: float | None =
         "confidence_factors": {
             "similarity": round(similarity, 4),
             "peak_clarity": round(prominence, 4),
+            "template_margin": round(template_margin, 4) if template_margin is not None else None,
             "temporal_consistency": round(consistency, 4) if consistency is not None else None,
             "model_version": CONFIDENCE_MODEL_VERSION,
             "reasons": reasons,

@@ -181,107 +181,126 @@ class JobService:
 
         episode_ids = payload.get("episode_ids") or []
         replace_existing = bool(payload.get("replace_existing_chapters"))
-        self._update(
-            job_id,
-            status="running",
-            stage="injecting_chapters",
-            started_at=utc_now(),
-            total_items=len(episode_ids),
-        )
-        detail = get_series_detail(series_name)
-        episodes_by_id = {
-            int(episode["id"]): episode
-            for episode in detail["episodes"]
-            if episode.get("id") is not None
-        }
-        errors = 0
-        completed = 0
         total = max(len(episode_ids), 1)
+        completed = 0
+        errors = 0
+        processed = 0
+        try:
+            self._update(
+                job_id,
+                status="running",
+                stage="injecting_chapters",
+                started_at=utc_now(),
+                total_items=len(episode_ids),
+            )
+            detail = get_series_detail(series_name)
+            episodes_by_id = {
+                int(episode["id"]): episode
+                for episode in detail["episodes"]
+                if episode.get("id") is not None
+            }
 
-        for index, episode_id in enumerate(episode_ids):
-            episode = episodes_by_id.get(int(episode_id))
-            if episode is None:
-                errors += 1
-                continue
-            item_key = episode["file_path"]
-            file_name = episode["file_name"]
+            for index, episode_id in enumerate(episode_ids):
+                episode = episodes_by_id.get(int(episode_id))
+                if episode is None:
+                    errors += 1
+                    processed += 1
+                    continue
+                item_key = episode["file_path"]
+                file_name = episode["file_name"]
+                if event.is_set():
+                    for remaining_id in episode_ids[index:]:
+                        remaining = episodes_by_id.get(int(remaining_id))
+                        if remaining:
+                            self._update_item(
+                                job_id,
+                                remaining["file_path"],
+                                item_status="cancelled",
+                                item_progress=0,
+                                item_error="Batch injection cancelled before this episode started.",
+                            )
+                    break
+
+                self._update(
+                    job_id,
+                    stage="injecting_chapters",
+                    current_item=file_name,
+                    progress=(index / total) * 100,
+                )
+                self._update_item(job_id, item_key, item_status="running", item_progress=0)
+                try:
+                    result = inject_episode_chapters(
+                        int(episode_id),
+                        replace_existing_chapters=replace_existing,
+                    )
+                except Exception as exc:
+                    errors += 1
+                    logger.exception("Batch injection failed for %s", file_name)
+                    self._update_item(
+                        job_id,
+                        item_key,
+                        item_status="failed",
+                        item_progress=100,
+                        item_error=str(exc),
+                        item_result={"episode_id": episode_id, "file_name": file_name, "error": str(exc)},
+                    )
+                else:
+                    completed += 1
+                    self._update_item(
+                        job_id,
+                        item_key,
+                        item_status="completed",
+                        item_progress=100,
+                        item_result=result,
+                    )
+                processed += 1
+                self._update(
+                    job_id,
+                    stage="injecting_chapters",
+                    current_item=file_name,
+                    progress=(processed / total) * 100,
+                )
+
             if event.is_set():
-                for remaining_id in episode_ids[index:]:
-                    remaining = episodes_by_id.get(int(remaining_id))
-                    if remaining:
-                        self._update_item(
-                            job_id,
-                            remaining["file_path"],
-                            item_status="cancelled",
-                            item_progress=0,
-                            item_error="Batch injection cancelled before this episode started.",
-                        )
-                break
-
-            self._update(
-                job_id,
-                stage="injecting_chapters",
-                current_item=file_name,
-                progress=(index / total) * 100,
-            )
-            self._update_item(job_id, item_key, item_status="running", item_progress=0)
-            try:
-                result = inject_episode_chapters(
-                    int(episode_id),
-                    replace_existing_chapters=replace_existing,
-                )
-            except Exception as exc:
-                errors += 1
-                logger.exception("Batch injection failed for %s", file_name)
-                self._update_item(
-                    job_id,
-                    item_key,
-                    item_status="failed",
-                    item_progress=100,
-                    item_error=str(exc),
-                    item_result={"episode_id": episode_id, "file_name": file_name, "error": str(exc)},
-                )
+                final_status = "cancelled"
+            elif errors and completed:
+                final_status = "completed_with_errors"
+            elif errors:
+                final_status = "failed"
             else:
-                completed += 1
-                self._update_item(
-                    job_id,
-                    item_key,
-                    item_status="completed",
-                    item_progress=100,
-                    item_result=result,
-                )
+                final_status = "completed"
             self._update(
                 job_id,
-                stage="injecting_chapters",
-                current_item=file_name,
-                progress=((index + 1) / total) * 100,
+                status=final_status,
+                stage=final_status,
+                progress=100 if not event.is_set() else (processed / total) * 100,
+                finished_at=utc_now(),
             )
+            log_event(
+                "INFO" if not errors else "WARNING",
+                "JobManager",
+                f"Batch chapter injection {final_status}.",
+                detail=f"{completed} succeeded; {errors} failed; {len(episode_ids)} selected.",
+                job_id=job_id,
+                series_name=series_name,
+            )
+        except Exception as exc:
+            logger.exception("Batch injection job %s failed", job_id)
+            self._update(
+                job_id,
+                status="failed",
+                stage="failed",
+                error=str(exc),
+                finished_at=utc_now(),
+            )
+            log_event(
+                "ERROR", "JobManager", "Batch chapter injection job failed.",
+                detail=str(exc), job_id=job_id, series_name=series_name,
+            )
+        finally:
+            with self._lock:
+                self._cancel.pop(job_id, None)
 
-        if event.is_set():
-            final_status = "cancelled"
-        elif errors and completed:
-            final_status = "completed_with_errors"
-        elif errors:
-            final_status = "failed"
-        else:
-            final_status = "completed"
-        self._update(
-            job_id,
-            status=final_status,
-            stage=final_status,
-            progress=100 if not event.is_set() else min(100.0, ((completed + errors) / total) * 100),
-            finished_at=utc_now(),
-        )
-        log_event(
-            "INFO" if not errors else "WARNING",
-            "JobManager",
-            f"Batch chapter injection {final_status}.",
-            detail=f"{completed} succeeded; {errors} failed; {len(episode_ids)} selected.",
-            job_id=job_id,
-            series_name=series_name,
-        )
-        with self._lock:
-            self._cancel.pop(job_id, None)
 
     def create_individual_job(self, staged_path: Path, series_name: str, selected_slug: str | None = None) -> dict:
         if not staged_path.exists() or staged_path.suffix.lower() != ".mkv":

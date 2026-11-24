@@ -206,9 +206,30 @@ def _as_record(candidate: dict | None) -> dict | None:
         return None
     record = {"name": candidate["name"], "start": float(candidate["start"]),
               "end": float(candidate["end"]), "score": float(candidate["score"])}
-    for key in ("similarity_score", "peak_prominence", "template_frames"):
+    for key in ("similarity_score", "peak_prominence", "template_frames", "template_margin"):
         if key in candidate:
             record[key] = candidate[key]
+    return record
+
+
+def _best_record(candidates: list[dict]) -> dict | None:
+    winner = _best(candidates)
+    if not winner:
+        return None
+    record = _as_record(winner)
+    winner_similarity = winner.get("similarity_score")
+    alternatives = [
+        float(item["similarity_score"])
+        for item in candidates
+        if item is not winner
+        and item.get("similarity_score") is not None
+    ]
+    if winner_similarity is not None and alternatives:
+        runner_up = max(alternatives)
+        record["template_margin"] = max(
+            0.0,
+            min(1.0, (float(winner_similarity) - runner_up) / max(abs(float(winner_similarity)), 1e-8)),
+        )
     return record
 
 
@@ -235,7 +256,7 @@ def analyze_path(path: Path, series_name: str, *, selected_slug: str | None = No
     op_candidates, ed_candidates = evaluate_episode_templates(
         path, wavs, plugins, progress_callback=episode_progress, cancel_event=cancel_event
     )
-    op, ed = _as_record(_best(op_candidates)), _as_record(_best(ed_candidates))
+    op, ed = _best_record(op_candidates), _best_record(ed_candidates)
     if templates_signature(wavs) != signature:
         raise RuntimeError("Templates changed during analysis. Run the analysis again.")
     _persist_analysis(episode_id, path, op, ed, signature, expected_fingerprint=original_fingerprint)
@@ -337,6 +358,7 @@ def _apply_anomalies(series_name: str) -> None:
                             "confidence_factors": assessed.get("confidence_factors"),
                         }
                     original_segment = assessed
+                record["original"][kind] = assessed
                 updated_segments[kind] = current_segment
                 anomaly_flags[kind] = anomalous
             status = episode_review_status(updated_segments["OP"], updated_segments["ED"])
@@ -419,7 +441,7 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
                                item_index=index, item_status="running", item_progress=pct,
                                progress=20 + (index + pct / 100) / total * 80)
                 op_candidates, ed_candidates = evaluate_episode_templates(path, wavs, plugins, cb, cancel_event)
-                op, ed = _as_record(_best(op_candidates)), _as_record(_best(ed_candidates))
+                op, ed = _best_record(op_candidates), _best_record(ed_candidates)
                 if templates_signature(wavs) != signature:
                     raise RuntimeError("Templates changed during analysis. Run the analysis again.")
                 _persist_analysis(episode_id, path, op, ed, signature, expected_fingerprint=original_fingerprint)
