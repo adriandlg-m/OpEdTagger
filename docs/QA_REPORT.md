@@ -22,7 +22,7 @@
 | Frontend `npm test` | Correcto en GitHub Actions |
 | Frontend `npm run build` | Correcto en GitHub Actions (Vite) |
 | Contrato del detector OP/ED | Correcto: `core/analyzer.py` sin cambios y prueba de regresión aprobada |
-| Migración de rutas, gestor de plugins y estructura de plantillas | Pruebas unitarias aprobadas en la suite de 72 pruebas |
+| Migración de rutas, gestor de plugins y estructura de plantillas | Pruebas unitarias aprobadas en la suite de 87 pruebas |
 | Esquema SQLite y persistencia | Verificado mediante pruebas |
 | Migración JSON dry-run / apply / idempotencia | Verificada con fixture aislado |
 | Restricción de trabajos duplicados por serie | Verificada en SQLite |
