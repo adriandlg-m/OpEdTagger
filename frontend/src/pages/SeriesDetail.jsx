@@ -1110,7 +1110,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
               </div>
             </div>
 
-            {activeFolderPath !== null && directEpisodes.length > 0 && (
+            {directEpisodes.length > 0 && (
               <div className="episode-column-head"><span>EPISODIO</span><span>OPENING</span><span>ENDING</span><span>ESTADO</span><span /></div>
             )}
             <div className="folder-browser-viewport" ref={workspaceScrollRef} aria-label="Carpetas y episodios" tabIndex={0}>

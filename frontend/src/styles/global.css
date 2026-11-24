@@ -5087,3 +5087,27 @@ button:disabled {
     font-size: 13px;
   }
 }
+
+
+/* Keep folder and episode summaries comfortably readable at normal desktop scale. */
+.detail-page .confidence-summary-detections,
+.detail-page .confidence-review-count {
+  font-size: 11px;
+  line-height: 1.4;
+}
+.detail-page .confidence-summary-label {
+  font-size: 10px;
+}
+.detail-page .confidence-count,
+.detail-page .confidence-count strong {
+  font-size: 10px;
+}
+.detail-page .confidence-batch-actions .button {
+  min-height: 31px;
+  padding-inline: 10px;
+  font-size: 11px;
+}
+.detail-page > .episodes-panel .table-footer {
+  font-size: 10px;
+  line-height: 1.4;
+}
