@@ -1,6 +1,6 @@
 {
   "library_path": "",
-  "template_path": "<project-root>/Templates",
+  "template_path": "<project-root>/templates",
   "plugins_path": "<project-root>/plugins",
   "database_path": "<application-data>/opedtagger.sqlite3",
   "backup_path": "<application-data>/backups",
