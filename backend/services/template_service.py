@@ -639,7 +639,7 @@ def download_selected_templates(
 def _ensure_templates_impl(
     series_name: str,
     selected_slug: str | None = None,
-    progress: Callable[[int, int, str], None] | None = None,
+    progress: Callable[[str, float, str], None] | None = None,
 ) -> Path:
     series_dir = _safe_series_template_dir(series_name)
     video_dir = series_dir / "video_files"
@@ -661,70 +661,110 @@ def _ensure_templates_impl(
     has_templates = bool(video_files or wav_files)
 
     if selected_slug:
-        download_selected_templates(series_name, selected_slug, progress)
+        result = download_selected_templates(series_name, selected_slug, progress)
+        if result.get("audio_preparation_error"):
+            raise RuntimeError(f"No se pudieron preparar los WAV: {result['audio_preparation_error']}")
+        if result.get("audio_preparation_warning"):
+            raise RuntimeError(result["audio_preparation_warning"])
         return series_dir
 
-    # Preserve explicitly user-managed WAV-only templates. Legacy CLI folders
-    # contain videos but no provider manifest, so they still need the automatic
-    # AnimeThemes sync when Analyze is pressed.
+    # Preserve manually supplied WAV-only template sets. Legacy CLI folders
+    # with videos and no manifest still require automatic AnimeThemes sync.
     user_managed_wavs_only = bool(wav_files) and not video_files and manifest_provider != "AnimeThemes"
     if user_managed_wavs_only:
+        _report_progress(progress, "validating_templates", 100.0, f"Usando {len(wav_files)} WAV manuales")
         return series_dir
     if manifest_provider not in {None, "AnimeThemes"} and has_templates:
+        _report_progress(progress, "validating_templates", 100.0, "Usando templates locales")
         return series_dir
 
     query = sanitize_query_from_folder(series_name)
     if not query:
         raise RuntimeError(f"The series folder name '{series_name}' produces an empty AnimeThemes search term.")
+
     try:
-        payload = _post_graphql(query)
+        _report_progress(progress, "searching_templates", 1.0, f"Buscando «{query}» en AnimeThemes")
+        payload = _post_graphql(query, progress=progress)
+        anime_rows = payload.get("data", {}).get("search", {}).get("anime", []) or []
+        if not isinstance(anime_rows, list):
+            raise RuntimeError("AnimeThemes devolvió un listado de animes con formato inesperado.")
+        if not anime_rows:
+            if has_templates:
+                logger.warning(
+                    "AnimeThemes returned no results for %s; reusing existing local templates.",
+                    series_name,
+                )
+                _report_progress(progress, "validating_templates", 100.0, "Reutilizando templates locales")
+                return series_dir
+            raise RuntimeError(
+                f"AnimeThemes no encontró resultados para «{query}» (serie local: '{series_name}')."
+            )
+
+        # Preserve the former CLI matching semantics: all partial slug/Romaji
+        # matches are used; if none match, fall back to all search results.
+        matched_animes = _select_cli_matches(series_name, query, anime_rows)
+        matched_animes = [anime for anime in matched_animes if anime.get("slug")]
+        if not matched_animes:
+            raise RuntimeError(f"AnimeThemes devolvió resultados sin slugs utilizables para '{series_name}'.")
+
+        detailed_rows = []
+        total_matches = len(matched_animes)
+        for index, anime in enumerate(matched_animes, 1):
+            slug = str(anime["slug"])
+            percentage = 2.0 + (index - 1) / max(total_matches, 1) * 3.0
+            _report_progress(
+                progress,
+                "loading_template_metadata",
+                percentage,
+                f"Obteniendo metadatos OP/ED · {anime.get('title', {}).get('romaji') or slug} ({index}/{total_matches})",
+            )
+            details = _fetch_anime_details(slug, progress=progress)
+            detailed = details.get("data", {}).get("anime")
+            if not isinstance(detailed, dict):
+                raise RuntimeError(f"AnimeThemes no devolvió metadatos OP/ED para '{slug}'.")
+            detailed_rows.append(detailed)
+
+        result = _download_anime_rows_templates_impl(series_name, detailed_rows, progress)
     except InterruptedError:
         raise
     except Exception as exc:
         if has_templates:
             logger.warning(
-                "AnimeThemes synchronization failed for %s; reusing the existing local templates: %s",
+                "AnimeThemes synchronization failed for %s; reusing existing local templates: %s",
                 series_name,
                 exc,
             )
+            _report_progress(progress, "validating_templates", 100.0, "Reutilizando templates locales por fallo de conexión")
             return series_dir
         raise
 
-    anime_rows = payload.get("data", {}).get("search", {}).get("anime", {}).get("data", []) or []
-    if not anime_rows:
-        if has_templates:
-            logger.warning(
-                "AnimeThemes returned no results for %s; reusing the existing local templates.",
-                series_name,
-            )
-            return series_dir
-        raise RuntimeError(
-            f"No AnimeThemes templates were found for '{series_name}' "
-            f"(search term: '{query}'). Check the series folder name or AnimeThemes connectivity."
-        )
-
-    # Match the CLI exactly: all slug/romaji partial matches are synchronized;
-    # if none match, the API's result list is used as the fallback.
-    matched_animes = _select_cli_matches(series_name, query, anime_rows)
-    result = _download_anime_rows_templates_impl(series_name, matched_animes, progress)
     if result.get("audio_preparation_error"):
-        raise RuntimeError(
-            f"AnimeThemes videos were downloaded but WAV preparation failed: {result['audio_preparation_error']}"
-        )
+        raise RuntimeError(f"Los vídeos se descargaron, pero falló la conversión WAV: {result['audio_preparation_error']}")
     if result.get("audio_preparation_warning"):
         raise RuntimeError(result["audio_preparation_warning"])
+    _report_progress(progress, "validating_templates", 95.0, "Comprobando que los WAV sean legibles")
+    valid_wavs = _valid_wav_files(series_dir / "songs_files")
+    if not valid_wavs:
+        raise RuntimeError(
+            f"AnimeThemes descargó los vídeos de '{series_name}', pero no quedaron plantillas WAV válidas."
+        )
+    _report_progress(
+        progress,
+        "validating_templates",
+        100.0,
+        f"Templates listos: {len(result.get('files') or [])} vídeos y {len(valid_wavs)} WAV",
+    )
     return series_dir
 
 
 def ensure_templates(
     series_name: str,
     selected_slug: str | None = None,
-    progress: Callable[[int, int, str], None] | None = None,
+    progress: Callable[[str, float, str], None] | None = None,
 ) -> Path:
     with _TEMPLATE_LOCK:
         target_dir = _safe_series_template_dir(series_name)
         _recover_template_swap(target_dir)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        (target_dir / "video_files").mkdir(parents=True, exist_ok=True)
-        (target_dir / "songs_files").mkdir(parents=True, exist_ok=True)
+        # Do not create empty video_files/songs_files folders before the API
+        # response has yielded usable OP/ED media. Failures must remain visible.
         return _ensure_templates_impl(series_name, selected_slug, progress)
