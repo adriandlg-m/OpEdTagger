@@ -157,3 +157,82 @@ def test_series_artwork_metadata_endpoint_returns_live_anilist_details(tmp_path,
     assert payload["metadata"]["title"] == "Example Anime"
     assert payload["metadata"]["description"] == "Synopsis from AniList."
     assert payload["metadata"]["year"] == 2024
+
+
+
+def test_manual_correction_preserves_original_detection_and_records_history(tmp_path, monkeypatch):
+    import json
+
+    from backend.infrastructure.config import save_config
+    from backend.infrastructure.database import db_session, init_db, utc_now
+    from backend.api.routers import chapters
+    from core.fingerprints import ANALYZER_VERSION, file_fingerprint
+
+    library = tmp_path / "library"
+    series_dir = library / "Example"
+    series_dir.mkdir(parents=True)
+    video = series_dir / "Example S01E01.mkv"
+    video.write_bytes(b"original mkv bytes")
+    save_config({"library_path": str(library)})
+    init_db()
+    stamp = utc_now()
+    stat = video.stat()
+    original = {"name": "OP1", "start": 10.0, "end": 100.0, "score": 2.0}
+    with db_session() as conn:
+        conn.execute(
+            "INSERT INTO series(name,directory,episode_count,last_scanned_at) VALUES(?,?,1,?)",
+            ("Example", str(series_dir), stamp),
+        )
+        conn.execute(
+            "INSERT INTO episodes(series_name,file_path,file_name,file_size,file_mtime,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            ("Example", str(video.resolve()), video.name, stat.st_size, stat.st_mtime, stamp, stamp),
+        )
+        episode_id = conn.execute(
+            "SELECT id FROM episodes WHERE file_path=?", (str(video.resolve()),)
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO analysis_results(episode_id,analysis_status,review_status,injection_status,"
+            "op_json,op_original_json,confidence_version,analyzer_version,template_signature,"
+            "analyzed_file_size,analyzed_file_mtime,content_fingerprint,source,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                episode_id, "COMPLETED", "PENDING", "NOT_REQUESTED",
+                json.dumps({**original, "confidence_score": 42, "confidence_band": "LOW"}),
+                json.dumps(original), "heuristic-confidence-v1", ANALYZER_VERSION,
+                "signature", stat.st_size, stat.st_mtime, file_fingerprint(video), "engine", stamp, stamp,
+            ),
+        )
+
+    monkeypatch.setattr(chapters, "get_mkv_duration", lambda *_args: 120.0)
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/episodes/{episode_id}/review",
+            json={"op": {"name": "OP1", "start": 20.0, "end": 110.0, "score": 2.0}},
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["review_status"] == "MANUALLY_REVIEWED"
+
+    with db_session() as conn:
+        row = conn.execute(
+            "SELECT op_json,op_original_json,review_status FROM analysis_results WHERE episode_id=?",
+            (episode_id,),
+        ).fetchone()
+        history = conn.execute(
+            "SELECT segment_type,action,before_json,after_json FROM analysis_segment_history "
+            "WHERE episode_id=? ORDER BY id",
+            (episode_id,),
+        ).fetchall()
+
+    current = json.loads(row["op_json"])
+    preserved_original = json.loads(row["op_original_json"])
+    assert current["start"] == 20.0
+    assert current["manual_verified"] is True
+    assert preserved_original == original
+    assert row["review_status"] == "MANUALLY_REVIEWED"
+    assert len(history) == 1
+    assert history[0]["segment_type"] == "OP"
+    assert history[0]["action"] == "CORRECTED"
+    assert json.loads(history[0]["before_json"])["start"] == 10.0
+    assert json.loads(history[0]["after_json"])["start"] == 20.0

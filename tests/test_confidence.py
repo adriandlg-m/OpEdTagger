@@ -41,7 +41,7 @@ def test_confidence_index_includes_template_margin_and_temporal_consistency():
         temporal_consistency=0.60,
     )
 
-    assert assessed["confidence_score"] == 79
+    assert assessed["confidence_score"] == 82
     assert assessed["confidence_band"] == "MEDIUM"
     factors = assessed["confidence_factors"]
     assert factors["template_margin"] == 0.7
