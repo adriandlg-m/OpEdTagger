@@ -204,6 +204,83 @@ def test_current_anime_themes_graphql_endpoint_and_schema_are_used():
     assert "\n    themes {" not in template_service.THEMES_QUERY
 
 
+
+def test_graphql_search_posts_to_current_host_with_current_variables(monkeypatch):
+    from types import SimpleNamespace
+    from backend.services import template_service
+
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return SimpleNamespace(
+            status_code=200,
+            headers={},
+            raise_for_status=lambda: None,
+            json=lambda: {"data": {"search": {"anime": []}}},
+        )
+
+    monkeypatch.setattr(template_service.http, "post", fake_post)
+
+    payload = template_service._post_graphql("Jujutsu Kaisen")
+
+    assert payload["data"]["search"]["anime"] == []
+    assert captured["url"] == "https://graphql.animethemes.moe/"
+    assert captured["json"]["variables"] == {"q": "Jujutsu Kaisen", "first": 10}
+    assert "search(search: $q, first: $first)" in captured["json"]["query"]
+    assert captured["timeout"] == (10, 20)
+
+
+def test_graphql_theme_details_use_current_anime_slug_query(monkeypatch):
+    from types import SimpleNamespace
+    from backend.services import template_service
+
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return SimpleNamespace(
+            status_code=200,
+            headers={},
+            raise_for_status=lambda: None,
+            json=lambda: {"data": {"anime": {"slug": "jujutsu-kaisen", "animethemes": []}}},
+        )
+
+    monkeypatch.setattr(template_service.http, "post", fake_post)
+
+    payload = template_service._fetch_anime_details("jujutsu-kaisen")
+
+    assert payload["data"]["anime"]["slug"] == "jujutsu-kaisen"
+    assert captured["url"] == "https://graphql.animethemes.moe/"
+    assert captured["json"]["variables"] == {"slug": "jujutsu-kaisen"}
+    assert "anime(slug: $slug)" in captured["json"]["query"]
+    assert "animethemes" in captured["json"]["query"]
+    assert "animethemeentries" in captured["json"]["query"]
+
+
+def test_graphql_cancellation_is_not_retried(monkeypatch):
+    from backend.services import template_service
+
+    calls = []
+
+    def interrupted_post(*_args, **_kwargs):
+        calls.append(True)
+        raise InterruptedError("user requested cancellation")
+
+    monkeypatch.setattr(template_service.http, "post", interrupted_post)
+
+    with pytest.raises(InterruptedError, match="user requested cancellation"):
+        template_service._graphql_request(
+            "query { test }",
+            {},
+            attempts=3,
+        )
+
+    assert len(calls) == 1
+
+
 def test_template_download_creates_both_folders_and_preserves_existing_song_files(tmp_path, monkeypatch):
     from backend.services import template_service
 
