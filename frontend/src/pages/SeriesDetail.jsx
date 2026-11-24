@@ -333,6 +333,8 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   const [bannerFailed, setBannerFailed] = useState(false);
   const [selectedEpisodeIds, setSelectedEpisodeIds] = useState(() => new Set());
   const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [batchPreviewOpen, setBatchPreviewOpen] = useState(false);
+  const [replaceExistingChapters, setReplaceExistingChapters] = useState(false);
   useEffect(() => setPosterUrl(series.poster_url || ''), [series.poster_url]);
 
   const refreshSeriesMetadata = useCallback(async () => {
@@ -416,7 +418,9 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   const reviewQueueCount = episodes.filter((episode) =>
     ['PENDING', 'REVIEW_RECOMMENDED'].includes(episode.review_status)
   ).length;
-  const processingFile = activeJob?.stage === 'analyzing_episodes' ? activeJob.current_item : null;
+  const processingFile = ['analyzing_episodes', 'injecting_chapters'].includes(activeJob?.stage)
+    ? activeJob.current_item
+    : null;
   const activeStageLabel = ({
     queued: 'En cola',
     initializing: 'Iniciando análisis',
@@ -515,19 +519,21 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     setSelectedEpisodeIds(new Set(eligibleEpisodes.map((episode) => episode.id)));
   };
 
-  const startBatchInjection = async () => {
-    const ids = selectedEligibleEpisodes.map((episode) => episode.id);
+  const startBatchInjection = () => {
+    if (selectedEligibleEpisodes.length && !batchSubmitting) {
+      setReplaceExistingChapters(false);
+      setBatchPreviewOpen(true);
+    }
+  };
+
+  const confirmBatchInjection = async () => {
+    const selected = [...selectedEligibleEpisodes];
+    const ids = selected.map((episode) => episode.id);
     if (!ids.length || batchSubmitting) return;
-    const replaceExisting = window.confirm(
-      '¿Deseas reemplazar los capítulos que ya existan en los MKV seleccionados?\n\nAceptar: reemplazar los existentes.\nCancelar: conservarlos y registrar esos archivos como omitidos/fallidos.'
-    );
-    const accepted = window.confirm(
-      `Se inyectarán capítulos en ${ids.length} episodios. Cada MKV tendrá una copia de seguridad y se verificará después de la escritura. ¿Continuar?`
-    );
-    if (!accepted) return;
     setBatchSubmitting(true);
     try {
-      const job = await api.startBatchInjection(series.name, ids, replaceExisting);
+      const job = await api.startBatchInjection(series.name, ids, replaceExistingChapters);
+      setBatchPreviewOpen(false);
       setSelectedEpisodeIds(new Set());
       onToast(`Inyección masiva iniciada para ${ids.length} episodios. Trabajo ${job.id}.`, 'success');
       await onRefresh?.();
@@ -551,6 +557,62 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
           onApplied={handlePosterApplied}
           onToast={onToast}
         />}
+
+        {batchPreviewOpen && (
+          <div className="batch-injection-backdrop" role="presentation" onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !batchSubmitting) setBatchPreviewOpen(false);
+          }}>
+            <section className="panel batch-injection-modal" role="dialog" aria-modal="true" aria-labelledby="batch-injection-title">
+              <header className="batch-injection-modal-header">
+                <div>
+                  <span className="panel-eyebrow">OPERACIÓN MASIVA</span>
+                  <h2 id="batch-injection-title">Revisar inyección de capítulos</h2>
+                  <p>{selectedEligibleEpisodes.length} episodios seleccionados · se procesarán secuencialmente</p>
+                </div>
+                <button className="icon-button" type="button" onClick={() => setBatchPreviewOpen(false)} disabled={batchSubmitting} aria-label="Cerrar vista previa"><XCircle size={18} /></button>
+              </header>
+              <div className="batch-injection-summary">
+                <span><strong>{selectedEligibleEpisodes.filter((episode) => episode.op).length}</strong> detecciones Opening</span>
+                <span><strong>{selectedEligibleEpisodes.filter((episode) => episode.ed).length}</strong> detecciones Ending</span>
+                <span><strong>{selectedEligibleEpisodes.length}</strong> MKV seleccionados</span>
+              </div>
+              <div className="batch-injection-preview-list" aria-label="Timestamps seleccionados para la inyección">
+                {selectedEligibleEpisodes.map((episode) => (
+                  <article className="batch-injection-preview-row" key={episode.id}>
+                    <strong>{episode.displayId || episode.file_name}</strong>
+                    <span className="batch-preview-file-name">{episode.file_name}</span>
+                    <div>
+                      <span>OP: {episode.op
+                        ? `${formatTimestamp(episode.op.start)}–${formatTimestamp(episode.op.end)}`
+                        : 'Sin detección'}</span>
+                      <span>ED: {episode.ed
+                        ? `${formatTimestamp(episode.ed.start)}–${formatTimestamp(episode.ed.end)}`
+                        : 'Sin detección'}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              <div className="batch-injection-options">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={replaceExistingChapters}
+                    onChange={(event) => setReplaceExistingChapters(event.target.checked)}
+                    disabled={batchSubmitting}
+                  />
+                  **Reemplazar capítulos existentes** en los MKV que ya contengan capítulos
+                </label>
+                <p>Se creará una copia de seguridad independiente para cada archivo. Después de escribir, OpEdTagger verificará cantidad, títulos y tiempos con FFprobe. Si no marcas esta opción, los archivos que ya tengan capítulos se registrarán como fallidos y no se modificarán.</p>
+              </div>
+              <footer className="batch-injection-modal-footer">
+                <button className="button button-ghost" type="button" onClick={() => setBatchPreviewOpen(false)} disabled={batchSubmitting}>Volver</button>
+                <button className="button button-primary" type="button" onClick={confirmBatchInjection} disabled={batchSubmitting || !selectedEligibleEpisodes.length}>
+                  {batchSubmitting ? 'Preparando trabajo…' : `Confirmar e inyectar ${selectedEligibleEpisodes.length} episodios`}
+                </button>
+              </footer>
+            </section>
+          </div>
+        )}
 
         <section className={`panel series-hero-panel ${active ? 'series-hero-processing' : ''} ${seriesMetadata?.banner_url && !bannerFailed ? 'series-hero-has-banner' : ''}`}>
           {seriesMetadata?.banner_url && !bannerFailed && (
