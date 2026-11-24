@@ -533,6 +533,8 @@ def _download_anime_rows_templates_impl(
                     size_label = _format_bytes(downloaded)
                     if total and total > 0:
                         size_label += f" / {_format_bytes(total)}"
+                    else:
+                        size_label += " · tamaño desconocido"
                     _report_progress(
                         progress,
                         "downloading_templates",
