@@ -244,17 +244,16 @@ def _recover_template_swap(target_dir: Path) -> None:
 
 def search_candidates(query: str) -> list[dict]:
     payload = _post_graphql(query)
-    data = payload.get("data", {}).get("search", {}).get("anime", {}).get("data", []) or []
+    data = payload.get("data", {}).get("search", {}).get("anime", []) or []
     result = []
     for anime in data:
         title = anime.get("title") or {}
-        themes = anime.get("themes") or []
         result.append({
             "slug": anime.get("slug"),
             "title_romaji": title.get("romaji"),
             "title_english": title.get("english"),
-            "opening_count": sum(1 for theme in themes if theme.get("type") == "OP"),
-            "ending_count": sum(1 for theme in themes if theme.get("type") == "ED"),
+            "opening_count": None,
+            "ending_count": None,
         })
     return result
 
