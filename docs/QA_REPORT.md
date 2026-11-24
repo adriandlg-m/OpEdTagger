@@ -11,6 +11,8 @@
 | `PYTHONPATH=. pytest -q` | **97 pruebas aprobadas**, 1 warning, GitHub Actions (Python 3.12, Ubuntu) |
 | TypeScript Compiler API parser sobre JS/JSX/TS del frontend | 17 archivos analizados sin errores de sintaxis |
 | Navegación jerárquica serie → carpeta → episodio | UI con carpetas contraídas, contenido directo por nivel, estado y navegación anterior/siguiente en el espacio de episodio; build Vite aprobado, validación visual Windows pendiente |
+| Refinamiento de legibilidad y revisión | Tipografía de Series Detail ampliada, estados técnicos traducidos, contraste del selector nativo adaptado al tema, botones jerarquizados y columnas ocultas en el nivel raíz |
+| Edición manual de timestamps | Entradas MM:SS.mmm / HH:MM:SS.mmm, punto o coma decimal, conversión a segundos y pruebas unitarias de formato/validación |
 | Toast fijo y Dashboard con scroll interno | Revisados estáticamente; prueba visual pendiente en Windows |
 | AniList public GraphQL API (sin token) y búsqueda de anime | Cubiertos con respuestas simuladas; una consulta externa real queda pendiente de la prueba en Windows |
 | Configuración de AniList | No hay token, API key ni credenciales que configurar |

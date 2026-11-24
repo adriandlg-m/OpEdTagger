@@ -4932,6 +4932,8 @@ button:disabled {
   min-height: 26px;
   padding-inline: 10px;
   font-size: 11px;
+}
+.detail-page .episode-browser-status .status-warning {
   background: color-mix(in srgb, var(--warning-soft) 72%, var(--surface));
 }
 .detail-page .status-danger {

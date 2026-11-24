@@ -314,13 +314,13 @@ function EpisodeWorkspace({
       <div className="episode-time-editor-fields">
         <label>
           <span>Inicio</span>
-          <input aria-label={`${label} inicio`} type="text" inputMode="decimal" autoComplete="off"
+          <input aria-label={`${label} inicio`} type="text" inputMode="text" autoComplete="off"
             spellCheck="false" value={start} disabled={reviewLocked}
             onChange={(event) => setStart(event.target.value)} placeholder="21:55.642" />
         </label>
         <label>
           <span>Final</span>
-          <input aria-label={`${label} final`} type="text" inputMode="decimal" autoComplete="off"
+          <input aria-label={`${label} final`} type="text" inputMode="text" autoComplete="off"
             spellCheck="false" value={end} disabled={reviewLocked}
             onChange={(event) => setEnd(event.target.value)} placeholder="23:24.412" />
         </label>
