@@ -44,6 +44,7 @@
 | Snapshot original e historial de correcciones/retiradas | Migración SQLite y prueba de persistencia manual |
 | Cola de revisión y selección de episodios elegibles | Frontend tests/build; validación visual Windows pendiente |
 | Inyección masiva secuencial con backup/verificación por MKV | Pruebas de lógica/job; validación real en Windows con MKV representativos pendiente |
+| Previsualización del lote antes de confirmar | Frontend tests y build aprobados; verificación visual en Windows pendiente |
 
 Las pruebas se ejecutaron en el entorno Python disponible durante la construcción. La configuración de Windows indicada en `setup_windows.bat` todavía debe validarse en un equipo Windows real.
 

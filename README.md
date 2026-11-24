@@ -97,7 +97,7 @@ La biblioteca del usuario no se copia al directorio de datos. Las cargas del an�
 3. El worker sincroniza los templates, prepara los WAV y analiza los episodios. Reutiliza caché solo cuando coinciden la versión del analizador, la versión del modelo de confianza, la firma de templates, el tamaño, la fecha de modificación y el fingerprint muestreado del MKV.
 4. Cada Opening y Ending encontrado recibe una puntuación de confianza independiente de 0 a 100: alta (90–100), media (70–89), baja (0–69) o sin evaluar. La detección se guarda automáticamente aunque necesite revisión.
 5. Abre **Ver excepciones** para revisar los resultados de baja confianza o las detecciones medias recomendadas. Puedes corregir los segundos o descartar un OP/ED falso positivo. El resultado original permanece en la base de datos y cada corrección o retirada se registra en el historial.
-6. Selecciona los episodios elegibles y pulsa **Inyectar seleccionados**. OpEdTagger procesa los MKV secuencialmente, crea una copia de seguridad por archivo y verifica los capítulos escritos con FFprobe. Los resultados individuales quedan registrados en el trabajo masivo.
+6. Selecciona los episodios elegibles y pulsa **Inyectar seleccionados**. Antes de iniciar, se abre una vista previa desplazable con los timestamps OP/ED de cada episodio, el recuento del lote y la opción de reemplazar capítulos existentes. Tras confirmar, OpEdTagger procesa los MKV secuencialmente, crea una copia de seguridad por archivo y verifica los capítulos escritos con FFprobe. Los resultados individuales quedan registrados en el trabajo masivo.
 
 Los episodios sin coincidencias se conservan como `NO_MATCH`, no como errores ni como análisis exitosos con datos vacíos.
 
