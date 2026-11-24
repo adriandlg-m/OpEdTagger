@@ -83,6 +83,47 @@ export const api = {
   exportLogsUrl: () => `${API_BASE}/logs/export`,
 };
 
+export function formatEditableTimestamp(seconds) {
+  if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) return '';
+  const totalMilliseconds = Math.max(0, Math.round(Number(seconds) * 1000));
+  const hours = Math.floor(totalMilliseconds / 3600000);
+  const totalMinutes = Math.floor(totalMilliseconds / 60000);
+  const minutes = hours > 0 ? Math.floor((totalMilliseconds % 3600000) / 60000) : totalMinutes;
+  const wholeSeconds = Math.floor((totalMilliseconds % 60000) / 1000);
+  const milliseconds = totalMilliseconds % 1000;
+  const pad = (value, size = 2) => String(value).padStart(size, '0');
+
+  return hours > 0
+    ? `${pad(hours)}:${pad(minutes)}:${pad(wholeSeconds)}.${pad(milliseconds, 3)}`
+    : `${pad(minutes)}:${pad(wholeSeconds)}.${pad(milliseconds, 3)}`;
+}
+
+export function parseEditableTimestamp(value) {
+  const text = String(value ?? '').trim().replace(',', '.');
+  if (!text) return null;
+
+  const mmss = text.match(/^(\d+):([0-5]?\d)(?:\.(\d{1,3}))?$/);
+  const hhmmss = text.match(/^(\d+):([0-5]\d):([0-5]\d)(?:\.(\d{1,3}))?$/);
+  const toMilliseconds = (fraction = '') => Number((fraction + '000').slice(0, 3));
+
+  if (mmss) {
+    const minutes = Number(mmss[1]);
+    const seconds = Number(mmss[2]);
+    const milliseconds = toMilliseconds(mmss[3]);
+    return minutes * 60 + seconds + milliseconds / 1000;
+  }
+
+  if (hhmmss) {
+    const hours = Number(hhmmss[1]);
+    const minutes = Number(hhmmss[2]);
+    const seconds = Number(hhmmss[3]);
+    const milliseconds = toMilliseconds(hhmmss[4]);
+    return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
+  }
+
+  return null;
+}
+
 export function formatTimestamp(seconds) {
   if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) return '—';
   const value = Math.max(0, Number(seconds));

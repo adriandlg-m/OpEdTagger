@@ -807,12 +807,14 @@ button:disabled {
 
   font-size: 12px;
   cursor: pointer;
+  color-scheme: inherit;
 
   padding-right: 15px;
 }
 
 .select-control select option {
-  color: #192338;
+  color: var(--text);
+  background-color: var(--surface);
 }
 
 .select-control svg {
@@ -4877,4 +4879,209 @@ button:disabled {
   .episode-workspace-navigation { width: 100%; flex-direction: row; justify-content: space-between; align-items: center; }
   .episode-workspace-sidebar { grid-template-columns: minmax(0, 1fr); }
   .episode-workspace { padding: 12px; }
+}
+
+
+/* Series Detail polish: improve reading comfort while keeping the dense layout. */
+.detail-page .folder-browser-copy strong,
+.detail-page .episode-browser-open strong {
+  font-size: 13px;
+}
+.detail-page .folder-browser-copy small,
+.detail-page .folder-browser-status small {
+  font-size: 11px;
+  line-height: 1.4;
+}
+.detail-page .folder-browser-status strong {
+  font-size: 11px;
+}
+.detail-page .folder-browser-row {
+  min-height: 72px;
+  gap: 15px;
+  padding: 11px 14px;
+}
+.detail-page .folder-browser-row:hover,
+.detail-page .folder-browser-row:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--border-soft));
+  background: color-mix(in srgb, var(--accent-soft) 52%, transparent);
+}
+.detail-page .episode-browser-main {
+  min-height: 76px;
+}
+.detail-page .episode-browser-open .stage-label {
+  font-size: 11px;
+  line-height: 1.4;
+}
+.detail-page .episode-segment .segment-label {
+  font-size: 11px;
+}
+.detail-page .episode-segment > strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.detail-page .episode-confidence-inline {
+  gap: 5px;
+}
+.detail-page .confidence-inline-label {
+  font-size: 10px;
+}
+.detail-page .episode-confidence-inline .confidence-inline {
+  font-size: 11px;
+}
+.detail-page .episode-browser-status .status-badge {
+  min-height: 26px;
+  padding-inline: 10px;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--warning-soft) 72%, var(--surface));
+}
+.detail-page .status-danger {
+  background: color-mix(in srgb, var(--danger-soft) 82%, var(--surface));
+}
+.detail-page .status-success {
+  background: color-mix(in srgb, var(--success-soft) 82%, var(--surface));
+}
+.detail-page .status-info {
+  background: color-mix(in srgb, var(--info-soft) 82%, var(--surface));
+}
+.detail-page .episode-workspace-title h2 {
+  font-size: 21px;
+}
+.detail-page .episode-workspace-title p {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.detail-page .workspace-back-link {
+  font-size: 11px;
+}
+.detail-page .episode-workspace-segment-heading h3 {
+  font-size: 16px;
+}
+.detail-page .episode-workspace-segment-heading > strong {
+  font-size: 15px;
+}
+.detail-page .confidence-detail-heading {
+  font-size: 11px;
+}
+.detail-page .confidence-metric-heading {
+  font-size: 11px;
+}
+.detail-page .confidence-metric-heading strong {
+  font-size: 11px;
+}
+.detail-page .confidence-metric small {
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.detail-page .confidence-factor-list {
+  gap: 6px 10px;
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.detail-page .confidence-detail ul {
+  margin: 1px 0 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.detail-page .confidence-detail li + li {
+  margin-top: 3px;
+}
+.detail-page .episode-workspace-info dt,
+.detail-page .episode-workspace-info dd {
+  font-size: 11px;
+}
+.detail-page .episode-workspace-info .status-badge {
+  min-height: 22px;
+  padding-inline: 8px;
+  font-size: 10px;
+}
+.detail-page .episode-workspace-history strong {
+  font-size: 11px;
+}
+.detail-page .episode-workspace-history small {
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.detail-page .episode-workspace-note,
+.detail-page .episode-workspace-error {
+  font-size: 11px;
+  line-height: 1.6;
+}
+.detail-page .episode-workspace-actions > .button {
+  width: 100%;
+  min-height: 40px;
+  justify-content: center;
+  font-size: 12px;
+}
+.detail-page .episode-workspace-actions .button-review-confirm {
+  color: var(--text);
+  background: var(--surface-3);
+  border-color: var(--border);
+  box-shadow: none;
+}
+.detail-page .episode-workspace-actions .button-review-confirm:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+}
+.detail-page .episode-workspace-actions .button-danger-ghost {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 24%, transparent);
+  box-shadow: none;
+}
+.detail-page .episode-time-editor {
+  gap: 10px;
+}
+.detail-page .episode-time-editor-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.detail-page .episode-time-editor > strong,
+.detail-page .episode-time-editor-heading > strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.detail-page .episode-time-editor-heading > span,
+.detail-page .episode-time-editor-hint {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.detail-page .episode-time-editor-fields label {
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+.detail-page .episode-time-editor-fields input {
+  min-height: 42px;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .2px;
+}
+.detail-page .episode-time-editor-fields input::placeholder {
+  color: var(--muted);
+  opacity: .9;
+}
+.detail-page .episode-time-editor-hint {
+  margin: -3px 0 0;
+}
+.detail-page .episode-workspace-actions > .button:disabled {
+  transform: none;
+}
+@media (max-width: 760px) {
+  .detail-page .folder-browser-row {
+    min-height: 66px;
+  }
+  .detail-page .episode-time-editor-fields input {
+    font-size: 13px;
+  }
 }

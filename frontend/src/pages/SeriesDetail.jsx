@@ -5,7 +5,7 @@ import Poster from '../components/Poster.jsx';
 import PosterSearchModal from '../components/PosterSearchModal.jsx';
 import SeriesArtworkLightbox from '../components/SeriesArtworkLightbox.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
-import { api, formatTimestamp } from '../api/client.js';
+import { api, formatTimestamp, formatEditableTimestamp, parseEditableTimestamp } from '../api/client.js';
 
 const INJECTION_ELIGIBLE_STATES = new Set([
   'AUTO_APPROVED', 'REVIEW_RECOMMENDED', 'MANUALLY_REVIEWED', 'APPROVED',
@@ -19,6 +19,39 @@ function isInjectionEligible(episode) {
     && INJECTION_ELIGIBLE_STATES.has(episode.review_status)
     && !['SUCCEEDED', 'IN_PROGRESS', 'RECOVERY_REQUIRED'].includes(episode.injection_status)
   );
+}
+
+const EPISODE_STATUS_LABELS = {
+  analysis: {
+    COMPLETED: 'Completado',
+    NO_MATCH: 'Sin coincidencias',
+    FAILED: 'Error',
+    STALE: 'Desactualizado',
+    PENDING: 'Pendiente',
+    SKIPPED: 'Omitido',
+    CANCELLED: 'Cancelado',
+  },
+  review: {
+    NOT_REQUIRED: 'No requiere revisión',
+    AUTO_APPROVED: 'Aprobado automáticamente',
+    REVIEW_RECOMMENDED: 'Revisión recomendada',
+    PENDING: 'Pendiente de revisión',
+    MANUALLY_REVIEWED: 'Revisado manualmente',
+    APPROVED: 'Aprobado manualmente',
+  },
+  injection: {
+    NOT_REQUESTED: 'No solicitada',
+    IN_PROGRESS: 'En curso',
+    RECOVERY_REQUIRED: 'Recuperación necesaria',
+    SUCCEEDED: 'Completada y verificada',
+    FAILED: 'Fallida',
+  },
+};
+
+function episodeStatusLabel(group, value) {
+  if (!value) return '—';
+  return EPISODE_STATUS_LABELS[group]?.[value]
+    || String(value).replaceAll('_', ' ').toLowerCase();
 }
 
 function confidenceLabel(band) {
@@ -189,16 +222,17 @@ function EpisodeRow({
 function EpisodeWorkspace({
   episode, siblings, onBack, backLabel = 'Volver a la carpeta', onNavigate, onApprove, onCorrect, onInject, onToast, showOutliers = true,
 }) {
-  const [opStart, setOpStart] = useState(episode.op?.start ?? '');
-  const [opEnd, setOpEnd] = useState(episode.op?.end ?? '');
-  const [edStart, setEdStart] = useState(episode.ed?.start ?? '');
-  const [edEnd, setEdEnd] = useState(episode.ed?.end ?? '');
+  const [opStart, setOpStart] = useState(formatEditableTimestamp(episode.op?.start));
+  const [opEnd, setOpEnd] = useState(formatEditableTimestamp(episode.op?.end));
+  const [edStart, setEdStart] = useState(formatEditableTimestamp(episode.ed?.start));
+  const [edEnd, setEdEnd] = useState(formatEditableTimestamp(episode.ed?.end));
+  const [savingCorrections, setSavingCorrections] = useState(false);
 
   useEffect(() => {
-    setOpStart(episode.op?.start ?? '');
-    setOpEnd(episode.op?.end ?? '');
-    setEdStart(episode.ed?.start ?? '');
-    setEdEnd(episode.ed?.end ?? '');
+    setOpStart(formatEditableTimestamp(episode.op?.start));
+    setOpEnd(formatEditableTimestamp(episode.op?.end));
+    setEdStart(formatEditableTimestamp(episode.ed?.start));
+    setEdEnd(formatEditableTimestamp(episode.ed?.end));
   }, [episode.id, episode.op?.start, episode.op?.end, episode.ed?.start, episode.ed?.end]);
 
   const index = siblings.findIndex((item) => item.id === episode.id);
@@ -215,6 +249,13 @@ function EpisodeWorkspace({
   const legacyResult = episode.analysis_status === 'STALE' || episode.legacy_result;
   const badgeStatus = reviewRecommended && canInject ? 'Listo · revisar'
     : injected ? 'Listo' : episode.status;
+  const segmentDraftChanged = (start, end, segment) => (
+    start !== formatEditableTimestamp(segment?.start)
+    || end !== formatEditableTimestamp(segment?.end)
+  );
+  const hasPendingCorrections = segmentDraftChanged(opStart, opEnd, episode.op)
+    || segmentDraftChanged(edStart, edEnd, episode.ed);
+
 
   const discardSegment = (kind) => {
     const label = kind === 'OP' ? 'Opening' : 'Ending';
@@ -228,42 +269,63 @@ function EpisodeWorkspace({
       : { op: episode.op, ed: null });
   };
 
-  const saveCorrections = () => {
+  const saveCorrections = async () => {
     const build = (start, end, existing, label) => {
-      if (String(start).trim() === '' && String(end).trim() === '') return null;
-      const numericStart = Number(start);
-      const numericEnd = Number(end);
-      if (!Number.isFinite(numericStart) || !Number.isFinite(numericEnd)
-        || numericStart < 0 || numericStart >= numericEnd) {
-        throw new Error(`${label}: introduce valores numéricos donde el inicio sea menor que el final.`);
+      const rawStart = String(start).trim();
+      const rawEnd = String(end).trim();
+      if (!rawStart && !rawEnd) return null;
+      if (!rawStart || !rawEnd) {
+        throw new Error(`${label}: completa tanto el inicio como el final.`);
+      }
+      const numericStart = rawStart === formatEditableTimestamp(existing?.start)
+        ? Number(existing.start)
+        : parseEditableTimestamp(rawStart);
+      const numericEnd = rawEnd === formatEditableTimestamp(existing?.end)
+        ? Number(existing.end)
+        : parseEditableTimestamp(rawEnd);
+      if (!Number.isFinite(numericStart) || !Number.isFinite(numericEnd)) {
+        throw new Error(`${label}: utiliza MM:SS.mmm o HH:MM:SS.mmm (por ejemplo, 21:55.642).`);
+      }
+      if (numericStart < 0 || numericStart >= numericEnd) {
+        throw new Error(`${label}: el inicio debe ser menor que el final.`);
       }
       return { ...(existing || {}), name: existing?.name || label, start: numericStart, end: numericEnd };
     };
+
     try {
-      const op = build(opStart, opEnd, episode.op, 'OP');
-      const ed = build(edStart, edEnd, episode.ed, 'ED');
+      const op = build(opStart, opEnd, episode.op, 'Opening');
+      const ed = build(edStart, edEnd, episode.ed, 'Ending');
       if (!op && !ed) throw new Error('Introduce al menos un segmento antes de guardar.');
-      onCorrect(episode, { op, ed });
+      setSavingCorrections(true);
+      await onCorrect(episode, { op, ed });
     } catch (error) {
       onToast(error.message, 'error');
+    } finally {
+      setSavingCorrections(false);
     }
   };
 
   const renderEditor = (label, start, end, setStart, setEnd) => (
     <div className="episode-time-editor">
-      <strong>{label} · segundos</strong>
+      <div className="episode-time-editor-heading">
+        <strong>{label} · tiempos de capítulo</strong>
+        <span>Formato MM:SS.mmm o HH:MM:SS.mmm</span>
+      </div>
       <div className="episode-time-editor-fields">
         <label>
           <span>Inicio</span>
-          <input aria-label={`${label} inicio en segundos`} type="number" min="0" step="0.01"
-            value={start} disabled={reviewLocked} onChange={(event) => setStart(event.target.value)} placeholder="Inicio" />
+          <input aria-label={`${label} inicio`} type="text" inputMode="decimal" autoComplete="off"
+            spellCheck="false" value={start} disabled={reviewLocked}
+            onChange={(event) => setStart(event.target.value)} placeholder="21:55.642" />
         </label>
         <label>
           <span>Final</span>
-          <input aria-label={`${label} final en segundos`} type="number" min="0" step="0.01"
-            value={end} disabled={reviewLocked} onChange={(event) => setEnd(event.target.value)} placeholder="Final" />
+          <input aria-label={`${label} final`} type="text" inputMode="decimal" autoComplete="off"
+            spellCheck="false" value={end} disabled={reviewLocked}
+            onChange={(event) => setEnd(event.target.value)} placeholder="23:24.412" />
         </label>
       </div>
+      <small className="episode-time-editor-hint">Puedes usar punto o coma decimal. Se guardará internamente en segundos.</small>
     </div>
   );
 
@@ -316,9 +378,9 @@ function EpisodeWorkspace({
           <section className="episode-workspace-info">
             <span className="panel-eyebrow">ESTADO DEL PROCESAMIENTO</span>
             <dl>
-              <div><dt>Análisis</dt><dd>{episode.analysis_status}</dd></div>
-              <div><dt>Revisión</dt><dd>{episode.review_status}</dd></div>
-              <div><dt>Inyección</dt><dd>{episode.injection_status}</dd></div>
+              <div><dt>Análisis</dt><dd><StatusBadge status={episodeStatusLabel('analysis', episode.analysis_status)} /></dd></div>
+              <div><dt>Revisión</dt><dd><StatusBadge status={episodeStatusLabel('review', episode.review_status)} /></dd></div>
+              <div><dt>Inyección</dt><dd><StatusBadge status={episodeStatusLabel('injection', episode.injection_status)} /></dd></div>
             </dl>
             {episode.error && <p className="episode-workspace-error">{episode.error}</p>}
             {legacyResult && <p className="episode-workspace-note">Estos timestamps provienen del JSON antiguo. Se conservan como referencia, pero debes repetir el análisis para evaluarlos antes de inyectarlos.</p>}
@@ -337,11 +399,16 @@ function EpisodeWorkspace({
 
           <section className="episode-workspace-actions">
             <span className="panel-eyebrow">ACCIONES</span>
-            {hasResult && <button className="button button-secondary" onClick={saveCorrections} disabled={reviewLocked}>Guardar correcciones</button>}
-            {episode.op && <button className="button button-ghost" onClick={() => discardSegment('OP')} disabled={reviewLocked}>Descartar Opening</button>}
-            {episode.ed && <button className="button button-ghost" onClick={() => discardSegment('ED')} disabled={reviewLocked}>Descartar Ending</button>}
+            {hasResult && (
+              <button className="button button-secondary" onClick={saveCorrections}
+                disabled={reviewLocked || savingCorrections || !hasPendingCorrections}>
+                {savingCorrections ? 'Guardando…' : hasPendingCorrections ? 'Guardar correcciones' : 'Sin cambios'}
+              </button>
+            )}
+            {episode.op && <button className="button button-danger-ghost" onClick={() => discardSegment('OP')} disabled={reviewLocked}>Descartar Opening</button>}
+            {episode.ed && <button className="button button-danger-ghost" onClick={() => discardSegment('ED')} disabled={reviewLocked}>Descartar Ending</button>}
             {legacyResult && <span className="muted-score">Reanaliza el episodio para habilitar la revisión segura.</span>}
-            {(needsReview || reviewRecommended) && <button className="button button-primary" onClick={() => onApprove(episode)} disabled={reviewLocked}><CheckCircle2 size={14} /> Confirmar manualmente</button>}
+            {(needsReview || reviewRecommended) && <button className="button button-secondary button-review-confirm" onClick={() => onApprove(episode)} disabled={reviewLocked}><CheckCircle2 size={14} /> Confirmar manualmente</button>}
             {canInject && !injected && !reviewLocked && <button className="button button-primary" onClick={() => onInject(episode)}><ShieldCheck size={14} /> Inyectar este episodio</button>}
             {injectionInProgress && <span className="episode-workspace-note">Inyección en curso. No edites ni vuelvas a ejecutar esta operación.</span>}
             {injected && <span className="status-badge status-success"><FileCheck2 size={13} /> Capítulos verificados</span>}
@@ -1043,7 +1110,9 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
               </div>
             </div>
 
-            <div className="episode-column-head"><span>EPISODIO / CARPETA</span><span>OPENING</span><span>ENDING</span><span>ESTADO</span><span /></div>
+            {activeFolderPath !== null && directEpisodes.length > 0 && (
+              <div className="episode-column-head"><span>EPISODIO</span><span>OPENING</span><span>ENDING</span><span>ESTADO</span><span /></div>
+            )}
             <div className="folder-browser-viewport" ref={workspaceScrollRef} aria-label="Carpetas y episodios" tabIndex={0}>
               <div key={activeFolderPath || 'series-root'} className="folder-browser-content workspace-view-transition">
                 {childFolders.map((folder) => (
