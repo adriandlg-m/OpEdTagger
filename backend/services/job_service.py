@@ -180,11 +180,15 @@ class JobService:
                     conn.execute("UPDATE job_items SET status='cancelled' WHERE job_id=?", (job_id,))
                 self._update(job_id, status="cancelled", stage="cancelled", finished_at=utc_now())
                 return
-            def template_progress(index: int, total: int, name: str) -> None:
+            def template_progress(stage: str, percentage: float, name: str) -> None:
                 if event.is_set():
                     raise InterruptedError("Analysis cancellation requested.")
-                self._update(job_id, stage="preparing_templates", current_item=name,
-                             progress=min(20.0, index / max(total, 1) * 20))
+                self._update(
+                    job_id,
+                    stage=stage,
+                    current_item=name,
+                    progress=percentage,
+                )
             def episode_progress(pct: float) -> None:
                 self._update(job_id, stage="analyzing", progress=20 + pct * 0.8, current_item=staged_path.name)
             result = analyze_path(staged_path, series_name, selected_slug=selected_slug,
