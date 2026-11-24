@@ -11,18 +11,21 @@ Base local: `http://127.0.0.1:8000/api`. FastAPI publica OpenAPI interactivo en 
 | GET | `/series/{series_name}` | Episodios y estados de una serie |
 | GET | `/jobs?limit=100` | Historial y trabajos |
 | POST | `/jobs/series/{series_name}` | Crea análisis de serie; body opcional: `skip_indices`, `selected_anime_slug` |
+| POST | `/jobs/series/{series_name}/inject` | Crea un trabajo de inyección masiva; body: `episode_ids` (1–500), `replace_existing_chapters` |
 | GET | `/jobs/{job_id}` | Estado y items del job |
 | POST | `/jobs/{job_id}/cancel` | Solicita cancelación cooperativa |
 | POST | `/templates/search` | Body: `{ "query": "..." }`; la pantalla de serie permite elegir la entrada correcta |
 | POST | `/templates/download` | Body: `{ "series_name": "...", "anime_slug": "..." }` |
 | POST | `/analysis` | Multipart: `file`, `series_name`, `anime_slug` opcional |
-| PUT | `/episodes/{id}/review` | Body: `op`, `ed`, `approved`; `op/ed` pueden corregirse manualmente |
+| PUT | `/episodes/{id}/review` | Body: `op`, `ed`, `approved`; cada segmento puede corregirse o descartarse (`null`); se conserva el original y se registra el historial |
 | GET | `/episodes/{id}/chapter-preview` | Duración real y plan de capítulos |
 | POST | `/episodes/{id}/inject` | Body: `{ "confirm": true, "replace_existing_chapters": false }` |
 | GET | `/logs?level=&q=&limit=300` | Consulta de logs estructurados |
 | GET | `/logs/export` | Exportación TXT |
 | GET/PUT | `/settings` | Rutas y ajustes de ejecución |
 | GET/PUT | `/settings/preferences` | Preferencias de interfaz |
+
+Los segmentos incluyen `confidence_score` (0–100), `confidence_band` (`HIGH`, `MEDIUM`, `LOW`, `UNASSESSED`) y `confidence_factors`. El estado `review_status` del episodio puede ser `AUTO_APPROVED`, `REVIEW_RECOMMENDED`, `PENDING`, `MANUALLY_REVIEWED`, `APPROVED` o `NOT_REQUIRED`. El índice es heurístico, no una probabilidad calibrada. `GET /jobs/{job_id}` devuelve el progreso y el resultado/error de cada elemento de un lote de inyección.
 
 Los errores utilizan respuestas HTTP con `detail` comprensible. La validación detallada de cada request está declarada en `backend/api/schemas/models.py` y en el esquema OpenAPI.
 

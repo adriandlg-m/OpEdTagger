@@ -18,14 +18,15 @@ Aplicación local modular, desplegada como un único backend FastAPI y un fronte
 SQLite usa WAL, foreign keys y busy timeout. Tablas:
 
 - `series`, `episodes`: catálogo local indexado.
-- `analysis_results`: resultados OP/ED y estados separados.
+- `analysis_results`: resultados OP/ED actuales, snapshots originales, versión del modelo de confianza y estados separados.
+- `analysis_segment_history`: correcciones, retiradas y aprobaciones por OP/ED, con valores anteriores y nuevos.
 - `jobs`, `job_items`: ejecución persistente e historial.
 - `activity_logs`: logs estructurados.
 - `app_settings`: preferencias de UI.
 - `migration_history`: idempotencia de importación legacy.
-- `schema_migrations`: versión base del esquema para facilitar futuras evoluciones controladas.
+- `schema_migrations`: migraciones explícitas de versión 1 a 5 (confianza, snapshots originales, historial y exclusión mutua de trabajos por serie).
 
-Los resultados asociados a archivos de biblioteca se vuelven a validar por versión del algoritmo, firma de templates, tamaño, mtime y fingerprint muestreado del archivo. Los WAV derivados tienen un manifiesto que los invalida cuando cambia o desaparece el video fuente. El fingerprint es una optimización de caché, no un checksum forense de todos los bytes.
+Los resultados asociados a archivos de biblioteca se vuelven a validar por versión del algoritmo, versión del modelo de confianza, firma de templates, tamaño, mtime y fingerprint muestreado del archivo. La versión nueva de confianza invalida los resultados cacheados anteriores para que los episodios se vuelvan a evaluar una vez y reciban métricas normalizadas. El score bruto del detector y la selección de su candidato ganador permanecen intactos. Los WAV derivados tienen un manifiesto que los invalida cuando cambia o desaparece el video fuente. El fingerprint es una optimización de caché, no un checksum forense de todos los bytes.
 
 ## Estados
 
@@ -35,13 +36,13 @@ Los resultados asociados a archivos de biblioteca se vuelven a validar por versi
 
 ### Revisión
 
-`NOT_REQUIRED` para `NO_MATCH`; `PENDING` cuando hay resultados que revisar; `APPROVED` tras aprobación explícita.
+`NOT_REQUIRED` para `NO_MATCH`; `AUTO_APPROVED` para detecciones de confianza alta; `REVIEW_RECOMMENDED` para confianza media; `PENDING` para baja confianza o sin evaluar; `MANUALLY_REVIEWED` cuando se verifican manualmente los segmentos; `APPROVED` cuando el usuario confirma explícitamente todos los resultados del episodio. Los estados de revisión se agregan desde la confianza independiente de cada OP y ED.
 
 ### Inyección
 
 `NOT_REQUESTED` → `IN_PROGRESS` → `SUCCEEDED` o `FAILED`. Si el proceso se interrumpe mientras el valor está en `IN_PROGRESS`, startup cambia a `RECOVERY_REQUIRED`. Ese estado bloquea nuevas inyecciones automáticas y exige inspección humana del MKV y del respaldo.
 
-Los estados de un job son `queued`, `running`, `completed`, `completed_with_errors`, `failed`, `cancelled` o `interrupted`.
+Los estados de un job son `queued`, `running`, `completed`, `completed_with_errors`, `failed`, `cancelled` o `interrupted`. Los trabajos `series` e `injection` comparten un índice único de SQLite que impide más de una operación activa en la misma serie.
 
 ## Flujos
 
@@ -49,8 +50,8 @@ Los estados de un job son `queued`, `running`, `completed`, `completed_with_erro
 2. **Preparación de herramientas:** en Windows x64, el backend inicia la instalación de FFmpeg/FFprobe en un hilo de segundo plano para no bloquear la interfaz. El primer análisis espera a que ambos ejecutables estén verificados. MKVToolNix se descarga de forma diferida antes de la primera inyección. Los paquetes oficiales se validan por SHA-256, se extraen en staging con controles de ruta, se comprueban y se activan atómicamente. Un fallo queda reflejado en `/api/system/health`.
 3. **Serie:** un job sincroniza AnimeThemes mediante el GraphQL actual (`graphql.animethemes.moe`), consulta `search(search:, first:)` y `anime(slug:)`, y selecciona todos los resultados cuyo slug/título romaji coincida, con fallback a la lista del proveedor como en el CLI. Cada descarga reporta estado, Opening/Ending y bytes transferidos. La preparación de templates ocupa el primer tramo del progreso; el análisis de episodios continúa del 20 al 100 %. Los WAV se validan antes de consultar caché y analizar. Una interrupción de AnimeThemes se informa y, cuando hay una caché local existente, esta puede reutilizarse.
 4. **Análisis individual:** carga multipart temporal, job independiente, resultado guardado en el item del job. No se añade al catálogo ni habilita inyección en esta versión.
-5. **Revisión:** el endpoint valida timestamps contra la duración real de FFprobe. Se permiten correcciones manuales desde la vista detalle. Cambiar timestamps invalida el estado de inyección anterior.
-6. **Inyección:** requiere review `APPROVED`, confirmación explícita y ausencia de otro worker de inyección. Comprueba capítulos existentes, crea backup, usa MKVToolNix, relee con FFprobe la cantidad, títulos y tiempos esperados y restaura backup ante excepción.
+5. **Confianza y revisión:** cada OP/ED recibe un índice heurístico 0–100 a partir de similitud normalizada, claridad del pico, margen frente a otros templates y consistencia temporal del mismo template entre episodios. Solo se evalúa consistencia cruzada con al menos tres detecciones comparables. Se almacena el modelo/versionado y las razones. El índice no es una probabilidad calibrada. La revisión manual permite ajustar o retirar un segmento; conserva los valores originales y añade una entrada a `analysis_segment_history`. Cambiar timestamps invalida el estado de inyección anterior.
+6. **Inyección individual o masiva:** los estados `AUTO_APPROVED`, `REVIEW_RECOMMENDED`, `MANUALLY_REVIEWED` y `APPROVED` son elegibles; `PENDING`/`UNASSESSED` no lo son. El usuario selecciona episodios y confirma una operación masiva. Un job durable procesa los MKV secuencialmente, con backup por archivo, detección de capítulos existentes, escritura con MKVToolNix y verificación posterior de cantidad, títulos y tiempos con FFprobe. Los fallos se registran por episodio y no cancelan el resto del lote.
 7. **Recovery:** jobs `queued/running` pasan a `interrupted`. Inyecciones `IN_PROGRESS` pasan a `RECOVERY_REQUIRED`. No hay repetición destructiva automática.
 
 ## Seguridad

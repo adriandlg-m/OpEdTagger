@@ -12,7 +12,8 @@ Esta distribución combina el motor de análisis del proyecto original con la in
 
 - Analizar un MKV **no modifica el archivo original**.
 - Los resultados de análisis, revisión e inyección tienen estados independientes.
-- La inyección requiere revisión aprobada y confirmación explícita.
+- La inyección permite resultados autoaprobados, recomendaciones de revisión y detecciones verificadas manualmente; las detecciones de baja confianza o sin evaluar quedan bloqueadas hasta resolverlas.
+- El índice de confianza de 0–100 es una métrica heurística de clasificación, no una probabilidad de acierto calibrada.
 - Antes de modificar un MKV se crea una copia de seguridad.
 - Si la inyección falla, el sistema intenta restaurar la copia.
 - Si la aplicación se interrumpe durante la inyección, el registro pasa a `RECOVERY_REQUIRED`; no se repite automáticamente.
@@ -37,7 +38,7 @@ tests/                  Pruebas automatizadas
 - **Persistencia:** SQLite con WAL y claves foráneas.
 - **Trabajos:** cola local persistida con un worker. Los trabajos activos se marcan como interrumpidos al iniciar después de un cierre inesperado; no se repiten solos.
 - **Progreso:** polling REST desde la interfaz. El proceso de serie muestra las fases de consulta, metadatos, descarga de cada OP/ED, conversión WAV y validación. La barra utiliza bytes transferidos cuando el servidor informa el tamaño y muestra los MB descargados cuando no lo informa.
-- **Motor:** conserva el algoritmo chroma del original (`COSINE_SIMILARITY_THRESHOLD = 0.68`). El detector OP/ED se trata como componente protegido: la preparación de herramientas, las plantillas, la interfaz y la inyección no deben cambiar su lógica ni sus parámetros. Una prueba de contrato verifica sus constantes y pasos críticos. El valor `score` se presenta como score bruto, nunca como porcentaje ni probabilidad. Los WAV derivados tienen un manifiesto de fingerprints: se regeneran cuando cambia el video fuente y se eliminan si el video fuente desaparece.
+- **Motor:** conserva el algoritmo chroma del original (`COSINE_SIMILARITY_THRESHOLD = 0.68`). El detector OP/ED se trata como componente protegido: se conserva el umbral `0.68`, la normalización de chroma, la selección de la coincidencia y el score bruto que determina el ganador. Se añadieron métricas auxiliares normalizadas (similitud, claridad del pico y separación frente a otros templates) sin cambiar qué detecciones acepta el motor. La capa `core/confidence.py` combina esas señales con la consistencia temporal entre episodios del mismo template para producir un índice heurístico de 0–100 por cada OP y ED. El índice no es una probabilidad de acierto y sus umbrales deben calibrarse con detecciones reales verificadas. Los WAV derivados tienen un manifiesto de fingerprints: se regeneran cuando cambia el video fuente y se eliminan si el video fuente desaparece.
 - **Templates:** al analizar una serie, el servicio utiliza el endpoint GraphQL actual de AnimeThemes (`graphql.animethemes.moe`) y su esquema vigente (`animethemes`, `animethemeentries`, `basename`). Sincroniza los resultados cuyo slug o título romaji coincida parcialmente con la carpeta; si no hay coincidencias, conserva el fallback del CLI. Descarga cada Opening/Ending en `video_files`, informa del progreso de transferencia, genera WAV en `songs_files` y valida los audios antes de iniciar la detección. No requiere selección manual. Los vídeos sin cambios se reutilizan; si AnimeThemes no está disponible, puede continuar con una caché local existente.
 
 ## Requisitos
@@ -93,11 +94,10 @@ La biblioteca del usuario no se copia al directorio de datos. Las cargas del an�
 
 1. Configura e indexa la biblioteca.
 2. Abre una serie y pulsa **Analizar serie**.
-3. El worker reutiliza resultados de caché únicamente cuando coinciden la versión del analizador, la firma de templates, el tamaño, la fecha de modificación y el fingerprint muestreado del archivo.
-4. Revisa los episodios con coincidencias.
-5. Ajusta manualmente los timestamps si es necesario y guarda los cambios.
-6. Pulsa **Aprobar detecciones**.
-7. Para inyectar, revisa la vista previa y confirma. Si el MKV ya tiene capítulos, se solicitará una segunda confirmación para reemplazarlos.
+3. El worker sincroniza los templates, prepara los WAV y analiza los episodios. Reutiliza caché solo cuando coinciden la versión del analizador, la versión del modelo de confianza, la firma de templates, el tamaño, la fecha de modificación y el fingerprint muestreado del MKV.
+4. Cada Opening y Ending encontrado recibe una puntuación de confianza independiente de 0 a 100: alta (90–100), media (70–89), baja (0–69) o sin evaluar. La detección se guarda automáticamente aunque necesite revisión.
+5. Abre **Ver excepciones** para revisar los resultados de baja confianza o las detecciones medias recomendadas. Puedes corregir los segundos o descartar un OP/ED falso positivo. El resultado original permanece en la base de datos y cada corrección o retirada se registra en el historial.
+6. Selecciona los episodios elegibles y pulsa **Inyectar seleccionados**. OpEdTagger procesa los MKV secuencialmente, crea una copia de seguridad por archivo y verifica los capítulos escritos con FFprobe. Los resultados individuales quedan registrados en el trabajo masivo.
 
 Los episodios sin coincidencias se conservan como `NO_MATCH`, no como errores ni como análisis exitosos con datos vacíos.
 
@@ -166,7 +166,8 @@ La documentación interactiva de FastAPI se encuentra en `http://127.0.0.1:8000/
 - AniList está integrado mediante su API pública GraphQL: no requiere token, API key ni configuración en Settings. Desde el Dashboard o el detalle de una serie puedes buscar por el nombre de la carpeta, modificar manualmente el título, elegir una coincidencia o cargar una imagen local. Consulta `docs/ANILIST_ARTWORK.md` para el flujo, caché, atribución y condiciones de uso.
 - No se ha creado un instalador ni un ejecutable empaquetado; la estructura está preparada para una fase posterior.
 - Los archivos MKV del análisis individual todavía no se pueden revisar/injectar desde esa pantalla.
-- La UI de revisión manual está disponible para episodios indexados en una biblioteca; debe probarse visualmente en Windows.
+- La UI de revisión de excepciones, la corrección/retirada individual de segmentos y la inyección masiva están disponibles para episodios indexados en una biblioteca; deben probarse visualmente en Windows.
+- El índice de confianza es heurístico y todavía necesita calibración con un conjunto etiquetado de detecciones OP/ED correctas e incorrectas. Las puntuaciones no deben interpretarse como porcentajes de probabilidad.
 - El seguimiento usa polling; SSE puede evaluarse más adelante si es necesario.
 - La cola es de un worker local y no reanuda por sí sola trabajos interrumpidos.
 - No se han ejecutado pruebas reales de descarga externa ni de modificación MKV en este entorno.

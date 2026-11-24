@@ -8,7 +8,7 @@
 | Comprobación | Resultado |
 |---|---|
 | `python -m compileall -q backend core scripts` | Correcto |
-| `PYTHONPATH=. pytest -q` | 87 pruebas aprobadas en GitHub Actions (Python 3.12, Ubuntu) |
+| `PYTHONPATH=. pytest -q` | Validación ampliada en curso para la rama de confianza y revisión por excepción; se actualizará con el resultado del último CI |
 | TypeScript Compiler API parser sobre JS/JSX/TS del frontend | 17 archivos analizados sin errores de sintaxis |
 | Jerarquía recursiva de carpetas de usuario | Verificada con carpetas multinivel y archivos en raíz |
 | Toast fijo y Dashboard con scroll interno | Revisados estáticamente; prueba visual pendiente en Windows |
@@ -21,11 +21,11 @@
 | Frontend `npm ci` | Correcto en GitHub Actions (Node.js 22) |
 | Frontend `npm test` | Correcto en GitHub Actions |
 | Frontend `npm run build` | Correcto en GitHub Actions (Vite) |
-| Contrato del detector OP/ED | Correcto: `core/analyzer.py` sin cambios y prueba de regresión aprobada |
+| Contrato del detector OP/ED | Se conserva `0.68`, el criterio de selección del ganador y el score bruto; se añadieron métricas auxiliares normalizadas sin modificar la aceptación de candidatos |
 | Migración de rutas, gestor de plugins y estructura de plantillas | Pruebas unitarias aprobadas en la suite de 87 pruebas |
 | Esquema SQLite y persistencia | Verificado mediante pruebas |
 | Migración JSON dry-run / apply / idempotencia | Verificada con fixture aislado |
-| Restricción de trabajos duplicados por serie | Verificada en SQLite |
+| Exclusión mutua entre análisis e inyección por serie | Verificada mediante índice único de SQLite y migración v5 |
 | Recuperación de trabajos interrumpidos | Verificada sin reanudación automática |
 | Reconciliación de archivos/series eliminados del catálogo | Verificada con fixtures; solo elimina filas SQLite |
 | Limpieza de cargas individuales interrumpidas | Verificada con validación de ruta |
@@ -40,6 +40,10 @@
 | Verificación exacta de capítulos por cantidad, títulos y tiempos | Verificada con FFprobe real sobre un MKV sintético; además se probó el rollback simulado |
 | Persistencia y presentación de fallos por episodio | Verificada con fixture aislado |
 | Protección de rutas y symlinks | Verificada con fixtures |
+| Índice de confianza OP/ED 0–100 y bandas | Pruebas de alta, media, baja, anomalía, métricas ausentes y revisión agregada |
+| Snapshot original e historial de correcciones/retiradas | Migración SQLite y prueba de persistencia manual |
+| Cola de revisión y selección de episodios elegibles | Frontend tests/build; validación visual Windows pendiente |
+| Inyección masiva secuencial con backup/verificación por MKV | Pruebas de lógica/job; validación real en Windows con MKV representativos pendiente |
 
 Las pruebas se ejecutaron en el entorno Python disponible durante la construcción. La configuración de Windows indicada en `setup_windows.bat` todavía debe validarse en un equipo Windows real.
 
@@ -55,11 +59,11 @@ La rama `feature/recover-cli-workflows` incorpora nuevas pruebas para:
 - El endpoint y esquema GraphQL actuales de AnimeThemes, variables de búsqueda/detalle, mapeo de `animethemes`/`animethemeentries` y manejo de cancelación.
 - El reporte de progreso por Opening/Ending y bytes transferidos, barra indeterminada durante consultas/tamaños desconocidos y progreso monotónico entre preparación y análisis.
 - La descarga de FFmpeg/FFprobe en segundo plano y la instalación diferida de MKVToolNix al inyectar capítulos.
-- La protección del contrato del motor OP/ED (`0.68`, 22.050 Hz, chroma, correlación y filtro ED del 70 %).
+- La protección del contrato de detección OP/ED (`0.68`, 22.050 Hz, chroma, correlación, filtro ED del 70 %) y las nuevas métricas auxiliares de confianza que no alteran la selección del ganador.
 - La extracción segura de ZIP y la recuperación de carpetas de plugins tras una interrupción.
 - Los nombres de capítulos históricos y el idioma `spa/es`, manteniendo backup, verificación y rollback.
 
-**Estado de esta rama:** en el commit `0bf1a2a` el workflow de GitHub Actions completó correctamente `compileall`, `pytest` (**87 pruebas**, 1 warning), `npm test` y `npm run build`. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales y la inyección sobre archivos MKV deben validarse además en Windows; no se simulan como pruebas de producción.
+**Estado de esta rama:** la validación actual del modelo de confianza, las correcciones manuales y los trabajos de inyección masiva se está ejecutando en GitHub Actions. No se declaran aprobadas hasta que termine el workflow del último commit. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales, la inyección masiva sobre MKV representativos y la inspección visual se deben validar además en Windows.
 
 
 ## Comprobaciones pendientes
