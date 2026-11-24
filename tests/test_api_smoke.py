@@ -204,7 +204,11 @@ def test_manual_correction_preserves_original_detection_and_records_history(tmp_
             ),
         )
 
+    # This test focuses on review persistence/history; file identity and
+    # containment guards are exercised by the injection-service tests.
     monkeypatch.setattr(chapters, "resolve_library_path", lambda: library.resolve())
+    monkeypatch.setattr(chapters, "resolve_within", lambda _root, candidate: candidate.resolve())
+    monkeypatch.setattr(chapters, "assert_analysis_file_unchanged", lambda _episode, _result: None)
     monkeypatch.setattr(chapters, "get_mkv_duration", lambda *_args: 120.0)
 
     with TestClient(app) as client:
