@@ -46,7 +46,7 @@ def test_load_config_migrates_old_appdata_directories_without_deleting_the_sourc
 
     config = load_config()
 
-    assert Path(config["template_path"]) == root / "Templates"
+    assert Path(config["template_path"]) == root / "templates"
     assert Path(config["plugins_path"]) == root / "plugins"
     assert (root / "templates" / "Show" / "video_files" / "opening.webm").read_bytes() == b"template-video"
     assert (root / "plugins" / "FFMPEG" / "bin" / "ffmpeg.exe").read_bytes() == b"old-tool"
@@ -54,7 +54,7 @@ def test_load_config_migrates_old_appdata_directories_without_deleting_the_sourc
     assert (old_templates / "Show" / "video_files" / "opening.webm").exists()
     assert (old_plugins / "FFMPEG" / "bin" / "ffmpeg.exe").exists()
     persisted = json.loads((app_data / "config.json").read_text(encoding="utf-8"))
-    assert persisted["template_path"] == str(root / "Templates")
+    assert persisted["template_path"] == str(root / "templates")
     assert persisted["plugins_path"] == str(root / "plugins")
 
 
@@ -67,7 +67,7 @@ def test_load_config_imports_original_cli_template_folder_on_fresh_install(tmp_p
     config = load_config()
 
     assert Path(config["template_path"]) == root / "Templates"
-    assert (root / "Templates" / "Show" / "video_files" / "OP1.webm").read_bytes() == b"legacy-video"
+    assert (root / "templates" / "Show" / "video_files" / "OP1.webm").read_bytes() == b"legacy-video"
 
 
 def test_load_config_upgrades_layout_v1_templates_to_lowercase_without_losing_files(tmp_path, monkeypatch):
