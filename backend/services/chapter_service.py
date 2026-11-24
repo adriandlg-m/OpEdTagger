@@ -80,7 +80,57 @@ def preview_batch_injection(
     return estimate
 
 
-def inject_episode_chapters(episode_id: int, *, replace_existing_chapters: bool = False) -> dict:
+def inject_episode_chapters(episode_id: int, *, replace_existing_chapters: bool = False) -> dict:def restore_recovery_transaction(transaction_id: str) -> dict:
+    """Restore one preserved source MKV and reset its injection state."""
+    from core.backup_manager import restore_recovery_backup
+
+    if not CHAPTER_OPERATION_LOCK.acquire(blocking=False):
+        raise RuntimeError("A chapter review or injection operation is currently running.")
+    try:
+        cfg = load_config()
+        library_root = resolve_library_path()
+        backup_root = Path(cfg["backup_path"]).expanduser().resolve()
+
+        def update_episode(episode_id: int, target: Path) -> None:
+            with db_session() as conn:
+                row = conn.execute(
+                    "SELECT injection_status FROM analysis_results WHERE episode_id=?",
+                    (episode_id,),
+                ).fetchone()
+                if not row:
+                    raise FileNotFoundError("The episode record for this recovery transaction no longer exists.")
+                if row["injection_status"] not in {"RECOVERY_REQUIRED", "NOT_REQUESTED"}:
+                    raise RuntimeError("The episode state changed. Refresh its status before restoring.")
+                stat = target.stat()
+                fingerprint = file_fingerprint(target)
+                stamp = utc_now()
+                conn.execute(
+                    "UPDATE analysis_results SET injection_status='NOT_REQUESTED',error=NULL,"
+                    "analyzed_file_size=?,analyzed_file_mtime=?,content_fingerprint=?,updated_at=? "
+                    "WHERE episode_id=?",
+                    (stat.st_size, stat.st_mtime, fingerprint, stamp, episode_id),
+                )
+                conn.execute(
+                    "UPDATE episodes SET file_size=?,file_mtime=?,updated_at=? WHERE id=?",
+                    (stat.st_size, stat.st_mtime, stamp, episode_id),
+                )
+
+        result = restore_recovery_backup(
+            transaction_id, backup_root, library_root, update_episode
+        )
+        log_event(
+            "WARNING",
+            "BackupManager",
+            "Original MKV restored from a recovery transaction.",
+            detail=f"Transaction {transaction_id}; target: {result['target_path']}",
+            episode_name=result["file_name"],
+        )
+        return result
+    finally:
+        CHAPTER_OPERATION_LOCK.release()
+
+
+
     """Safely inject and verify one episode's approved/eligible chapter plan."""
     if not CHAPTER_OPERATION_LOCK.acquire(blocking=False):
         raise RuntimeError("Another chapter review or injection operation is currently running.")

@@ -90,3 +90,20 @@ def open_backups_folder(payload: dict | None = None):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not open the backup folder: {exc}") from exc
     return {"opened": True, "path": str(target)}
+
+
+
+@router.post("/backups/recovery/{transaction_id}/restore")
+def restore_recovery_backup(transaction_id: str):
+    from backend.services.chapter_service import restore_recovery_transaction
+
+    try:
+        return restore_recovery_transaction(transaction_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not restore the original MKV: {exc}") from exc

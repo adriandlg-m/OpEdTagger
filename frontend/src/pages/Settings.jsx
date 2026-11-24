@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, Database, ExternalLink, Folder, FolderOpen, HardDrive, Info, Moon, RefreshCw, ShieldCheck, SlidersHorizontal, Sun } from 'lucide-react';
+import { AlertTriangle, Check, Database, ExternalLink, Folder, FolderOpen, HardDrive, Info, Moon, RefreshCw, RotateCcw, ShieldCheck, SlidersHorizontal, Sun } from 'lucide-react';
 import PageHeader from '../components/PageHeader.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 import { api } from '../api/client.js';
@@ -28,6 +28,7 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
   const [backupSummary, setBackupSummary] = useState(null);
   const [backupSummaryLoading, setBackupSummaryLoading] = useState(false);
   const [openingBackupFolder, setOpeningBackupFolder] = useState('');
+  const [restoringTransactionId, setRestoringTransactionId] = useState('');
 
   useEffect(() => {
     setPath(settings?.library_path || '');
@@ -107,7 +108,30 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
     catch (error) { onToast(error.message, 'error'); }
   };
 
-  const openBackupFolder = async (section = 'root') => {
+  const openBackupFolder = async (section = 'root') => {  const restoreRecoveryItem = async (item) => {
+    const target = item.target_path || item.file_name;
+    const accepted = window.confirm(
+      `¿Restaurar el MKV original de "${item.file_name}"?
+
+Se reemplazará el archivo de destino con la copia íntegra conservada. El respaldo solo se eliminará después de verificar el archivo restaurado y actualizar el estado del episodio.
+
+Destino: ${target}`
+    );
+    if (!accepted) return;
+    setRestoringTransactionId(item.transaction_id);
+    try {
+      await api.restoreRecoveryBackup(item.transaction_id);
+      await refreshBackupSummary();
+      onToast(`Se restauró el MKV original: ${item.file_name}.`, 'success');
+    } catch (error) {
+      onToast(error.message || 'No se pudo restaurar el MKV original. El respaldo se conserva.', 'error');
+      await refreshBackupSummary();
+    } finally {
+      setRestoringTransactionId('');
+    }
+  };
+
+
     setOpeningBackupFolder(section);
     try {
       await api.openBackupsFolder(section);
@@ -173,11 +197,24 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
                     onClick={() => openBackupFolder('recovery')} disabled={openingBackupFolder !== ''}>
                     Abrir recuperación
                   </button>
-                  <ul>
+                  <ul className="settings-backup-recovery-list">
                     {backupSummary.recovery_items.slice(0, 3).map((item) => (
-                      <li key={item.transaction_id}>{item.file_name} · {formatStorageBytes(item.backup_bytes)}</li>
+                      <li key={item.transaction_id}>
+                        <div>
+                          <strong>{item.file_name}</strong>
+                          <span>{formatStorageBytes(item.backup_bytes)} · {item.reason}</span>
+                        </div>
+                        <button type="button" className="button button-secondary button-small"
+                          onClick={() => restoreRecoveryItem(item)}
+                          disabled={restoringTransactionId !== '' || openingBackupFolder !== ''}>
+                          <RotateCcw size={12} />
+                          {restoringTransactionId === item.transaction_id ? 'Restaurando…' : 'Restaurar original'}
+                        </button>
+                      </li>
                     ))}
-                    {backupSummary.recovery_count > 3 && <li>Y {backupSummary.recovery_count - 3} más…</li>}
+                    {backupSummary.recovery_count > 3 && (
+                      <li>Y {backupSummary.recovery_count - 3} más… <button type="button" className="button button-ghost button-small" onClick={() => openBackupFolder('recovery')}>Ver todos</button></li>
+                    )}
                   </ul>
                 </div>
               )}

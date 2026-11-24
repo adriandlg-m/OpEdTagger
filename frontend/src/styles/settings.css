@@ -1078,3 +1078,52 @@
   .settings-backup-summary-heading .button { width: 100%; }
   .settings-backup-stats { grid-template-columns: 1fr; }
 }
+
+
+.settings-backup-recovery-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-backup-recovery-list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--danger) 18%, transparent);
+}
+.settings-backup-recovery-list > li > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.settings-backup-recovery-list strong {
+  color: var(--text);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.settings-backup-recovery-list span {
+  color: var(--text-2);
+  font-size: 9px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.settings-backup-recovery-list .button {
+  flex: 0 0 auto;
+  min-height: 29px;
+  padding-inline: 8px;
+  font-size: 9px;
+}
+@media (max-width: 520px) {
+  .settings-backup-recovery-list > li {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .settings-backup-recovery-list .button {
+    width: 100%;
+    justify-content: center;
+  }
+}

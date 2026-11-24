@@ -45,6 +45,10 @@ export const api = {
   openBackupsFolder: (section = 'root') => request('/settings/backups/open', {
     method: 'POST', body: JSON.stringify({ section }),
   }),
+  restoreRecoveryBackup: (transactionId) => request(
+    `/settings/backups/recovery/${encodeURIComponent(transactionId)}/restore`,
+    { method: 'POST' },
+  ),
   preferences: () => request('/settings/preferences'),
   savePreferences: (payload) => request('/settings/preferences', { method: 'PUT', body: JSON.stringify(payload) }),
   searchAnimeArtwork: (seriesName, query = '') => request('/artwork/search', {

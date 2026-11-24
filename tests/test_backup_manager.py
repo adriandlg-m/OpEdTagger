@@ -93,3 +93,79 @@ def test_reconcile_finalizes_verified_transaction_only_when_database_succeeded(t
     assert not temporary.exists()
     assert list((tmp_path / "backups" / "temporary").iterdir()) == []
     assert states == {}
+
+
+
+def test_restore_recovery_backup_verifies_original_and_updates_episode_before_cleanup(tmp_path):
+    from core.fingerprints import file_fingerprint
+
+    root = tmp_path / "project" / "backups"
+    library = tmp_path / "library"
+    library.mkdir(parents=True)
+    target = library / "episode.mkv"
+    target.write_bytes(b"partially modified content")
+    layout = backup_manager.ensure_backup_layout(root)
+    recovery = layout["recovery"] / "txn-restore"
+    recovery.mkdir()
+    backup = recovery / "original.mkv"
+    backup.write_bytes(b"original full mkv content")
+    fingerprint = file_fingerprint(backup)
+    backup_manager.write_transaction_manifest(recovery, {
+        "transaction_id": "txn-restore",
+        "episode_id": 12,
+        "file_name": target.name,
+        "target_path": str(target),
+        "backup_file": "original.mkv",
+        "original_size": backup.stat().st_size,
+        "original_fingerprint": fingerprint,
+        "phase": "RECOVERY_REQUIRED",
+    })
+    updated = {}
+
+    result = backup_manager.restore_recovery_backup(
+        "txn-restore",
+        root,
+        library,
+        lambda episode_id, path: updated.update({episode_id: str(path)}),
+    )
+
+    assert target.read_bytes() == b"original full mkv content"
+    assert result["restored"] is True
+    assert updated == {12: str(target)}
+    assert not recovery.exists()
+
+
+def test_restore_recovery_backup_keeps_backup_when_episode_update_fails(tmp_path):
+    from core.fingerprints import file_fingerprint
+    import pytest
+
+    root = tmp_path / "backups"
+    library = tmp_path / "library"
+    library.mkdir(parents=True)
+    target = library / "episode.mkv"
+    target.write_bytes(b"partial")
+    layout = backup_manager.ensure_backup_layout(root)
+    recovery = layout["recovery"] / "txn-db-fail"
+    recovery.mkdir()
+    backup = recovery / "original.mkv"
+    backup.write_bytes(b"original")
+    backup_manager.write_transaction_manifest(recovery, {
+        "transaction_id": "txn-db-fail",
+        "episode_id": 13,
+        "file_name": target.name,
+        "target_path": str(target),
+        "backup_file": "original.mkv",
+        "original_size": backup.stat().st_size,
+        "original_fingerprint": file_fingerprint(backup),
+        "phase": "RECOVERY_REQUIRED",
+    })
+
+    def fail_db_update(_episode_id, _path):
+        raise RuntimeError("database unavailable")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        backup_manager.restore_recovery_backup("txn-db-fail", root, library, fail_db_update)
+
+    assert target.read_bytes() == b"original"
+    assert recovery.is_dir()
+    assert (recovery / "original.mkv").read_bytes() == b"original"

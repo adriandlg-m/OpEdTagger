@@ -123,7 +123,87 @@ def _load_manifest_safe(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def get_backup_summary(backup_root: Path) -> dict[str, Any]:
+def get_backup_summary(backup_root: Path) -> dict[str, Any]:def restore_recovery_backup(
+    transaction_id: str,
+    backup_root: Path,
+    library_root: Path,
+    update_episode,
+) -> dict[str, Any]:
+    """Restore a preserved original MKV and finalize DB state before deleting recovery data."""
+    from core.fingerprints import file_fingerprint
+
+    directories = ensure_backup_layout(backup_root)
+    recovery_root = directories["recovery"].resolve()
+    matches = []
+    for candidate in recovery_root.iterdir():
+        if not candidate.is_dir() or candidate.is_symlink():
+            continue
+        try:
+            manifest = read_transaction_manifest(candidate)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if str(manifest.get("transaction_id")) == str(transaction_id):
+            matches.append((candidate, manifest))
+
+    if len(matches) != 1:
+        raise FileNotFoundError("The requested recovery transaction was not found or is ambiguous.")
+
+    transaction_dir, manifest = matches[0]
+    if manifest.get("phase") != "RECOVERY_REQUIRED":
+        raise ValueError("This backup transaction is not marked as requiring recovery.")
+
+    episode_id = manifest.get("episode_id")
+    if episode_id is None:
+        raise ValueError("The recovery manifest does not identify an episode; use manual inspection.")
+
+    target_raw = Path(str(manifest.get("target_path") or ""))
+    library_root = library_root.expanduser().resolve()
+    if not target_raw.is_absolute():
+        raise ValueError("The recovery manifest contains a non-absolute MKV target path.")
+    target = target_raw.resolve()
+    try:
+        target.relative_to(library_root)
+    except ValueError as exc:
+        raise ValueError("The recovery target is outside the configured media library.") from exc
+    if target.suffix.lower() != ".mkv" or not target.parent.is_dir():
+        raise ValueError("The original MKV target folder is unavailable.")
+
+    backup_name = str(manifest.get("backup_file") or "original.mkv")
+    backup_path = transaction_dir / backup_name
+    if backup_path.is_symlink() or not backup_path.is_file():
+        raise FileNotFoundError("The preserved original MKV backup is missing.")
+    expected_size = int(manifest.get("original_size") or -1)
+    expected_fingerprint = str(manifest.get("original_fingerprint") or "")
+    if backup_path.stat().st_size != expected_size:
+        raise RuntimeError("The preserved backup has an unexpected size.")
+    if not expected_fingerprint or file_fingerprint(backup_path) != expected_fingerprint:
+        raise RuntimeError("The preserved backup failed its integrity check.")
+
+    already_restored = (
+        target.is_file()
+        and target.stat().st_size == expected_size
+        and file_fingerprint(target) == expected_fingerprint
+    )
+    if not already_restored:
+        shutil.copy2(backup_path, target)
+        if target.stat().st_size != expected_size or file_fingerprint(target) != expected_fingerprint:
+            raise RuntimeError("The restored MKV failed its integrity check. The recovery backup has been retained.")
+
+    # The callback commits the restored fingerprint and resets injection_status.
+    # Do not delete the untouched recovery backup until that DB write succeeds.
+    update_episode(int(episode_id), target)
+    shutil.rmtree(transaction_dir)
+    return {
+        "transaction_id": str(transaction_id),
+        "episode_id": int(episode_id),
+        "file_name": str(manifest.get("file_name") or target.name),
+        "target_path": str(target),
+        "already_restored": already_restored,
+        "restored": True,
+    }
+
+
+
     directories = ensure_backup_layout(backup_root)
     root = Path(backup_root).expanduser().resolve()
     recovery_items = []
