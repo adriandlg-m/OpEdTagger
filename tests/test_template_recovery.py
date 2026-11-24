@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import wave
+
+import pytest
+
 from backend.services.template_service import _recover_template_swap
 
 
@@ -78,6 +82,25 @@ def test_automatic_template_selection_falls_back_to_first_result_with_op_ed():
     selected = _choose_automatic_candidate("Local Folder Name", candidates)
 
     assert selected["slug"] == "provider-ranked-match"
+
+
+
+def test_wav_validation_excludes_corrupt_files_before_analysis(tmp_path):
+    from backend.services.analysis_service import _validate_wav_templates
+
+    valid = tmp_path / "valid.wav"
+    with wave.open(str(valid), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(22050)
+        audio.writeframes(b"\\x00\\x00" * 220)
+
+    invalid = tmp_path / "broken.wav"
+    invalid.write_bytes(b"not a wave file")
+
+    assert _validate_wav_templates([valid, invalid], "Example Show") == [valid]
+    with pytest.raises(RuntimeError, match="No valid WAV templates"):
+        _validate_wav_templates([invalid], "Example Show")
 
 
 def test_template_download_creates_both_folders_and_preserves_existing_song_files(tmp_path, monkeypatch):
