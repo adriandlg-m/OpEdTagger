@@ -1,6 +1,6 @@
 # OpEdTagger — Nueva arquitectura
 
-**Versión de desarrollo: 1.5.2-series-navigation-loading-guard**
+**Versión de desarrollo: 1.6.0-confidence-review-batch-injection**
 
 OpEdTagger analiza episodios de anime para detectar segmentos Opening (OP) y Ending (ED), permite revisar los timestamps y ofrece un flujo separado para inyectar capítulos en archivos MKV.
 

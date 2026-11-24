@@ -8,7 +8,7 @@
 | Comprobación | Resultado |
 |---|---|
 | `python -m compileall -q backend core scripts` | Correcto |
-| `PYTHONPATH=. pytest -q` | Validación ampliada en curso para la rama de confianza y revisión por excepción; se actualizará con el resultado del último CI |
+| `PYTHONPATH=. pytest -q` | **94 pruebas aprobadas**, 1 warning, GitHub Actions (Python 3.12, Ubuntu) |
 | TypeScript Compiler API parser sobre JS/JSX/TS del frontend | 17 archivos analizados sin errores de sintaxis |
 | Jerarquía recursiva de carpetas de usuario | Verificada con carpetas multinivel y archivos en raíz |
 | Toast fijo y Dashboard con scroll interno | Revisados estáticamente; prueba visual pendiente en Windows |
@@ -22,7 +22,7 @@
 | Frontend `npm test` | Correcto en GitHub Actions |
 | Frontend `npm run build` | Correcto en GitHub Actions (Vite) |
 | Contrato del detector OP/ED | Se conserva `0.68`, el criterio de selección del ganador y el score bruto; se añadieron métricas auxiliares normalizadas sin modificar la aceptación de candidatos |
-| Migración de rutas, gestor de plugins y estructura de plantillas | Pruebas unitarias aprobadas en la suite de 87 pruebas |
+| Migración de rutas, gestor de plugins y estructura de plantillas | Pruebas unitarias aprobadas en la suite de 94 pruebas |
 | Esquema SQLite y persistencia | Verificado mediante pruebas |
 | Migración JSON dry-run / apply / idempotencia | Verificada con fixture aislado |
 | Exclusión mutua entre análisis e inyección por serie | Verificada mediante índice único de SQLite y migración v5 |
@@ -63,7 +63,7 @@ La rama `feature/recover-cli-workflows` incorpora nuevas pruebas para:
 - La extracción segura de ZIP y la recuperación de carpetas de plugins tras una interrupción.
 - Los nombres de capítulos históricos y el idioma `spa/es`, manteniendo backup, verificación y rollback.
 
-**Estado de esta rama:** la validación actual del modelo de confianza, las correcciones manuales y los trabajos de inyección masiva se está ejecutando en GitHub Actions. No se declaran aprobadas hasta que termine el workflow del último commit. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales, la inyección masiva sobre MKV representativos y la inspección visual se deben validar además en Windows.
+**Estado de esta rama:** GitHub Actions completó correctamente `compileall`, `pytest` (**94 pruebas aprobadas, 1 warning**), `npm test` y `npm run build`. La suite cubre las bandas de confianza, la migración e historial de correcciones, la protección del motor de detección y la cola de inyección. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales, la inyección masiva sobre MKV representativos y la inspección visual se deben validar además en Windows.
 
 
 ## Comprobaciones pendientes
