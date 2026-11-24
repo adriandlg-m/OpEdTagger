@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Play, Search, ShieldCheck, XCircle, Eye, FileCheck2, Folder, FolderOpen, ImagePlus, Trash2, ZoomIn, ExternalLink } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, ListChecks, Play, Search, ShieldCheck, XCircle, Eye, FileCheck2, Folder, FolderOpen, ImagePlus, Trash2, ZoomIn, ExternalLink } from 'lucide-react';
 import PageHeader from '../components/PageHeader.jsx';
 import Poster from '../components/Poster.jsx';
 import PosterSearchModal from '../components/PosterSearchModal.jsx';
@@ -498,6 +498,33 @@ function folderEpisodeSummary(folder, matchingIds) {
   };
 }
 
+function EpisodeHeaderSelectAll({ episodes, selectedIds, onChange }) {
+  const checkboxRef = useRef(null);
+  const eligibleEpisodes = episodes.filter(isInjectionEligible);
+  const selectedCount = eligibleEpisodes.filter((episode) => selectedIds.has(episode.id)).length;
+  const allSelected = eligibleEpisodes.length > 0 && selectedCount === eligibleEpisodes.length;
+  const partiallySelected = selectedCount > 0 && !allSelected;
+
+  useEffect(() => {
+    if (checkboxRef.current) checkboxRef.current.indeterminate = partiallySelected;
+  }, [partiallySelected]);
+
+  return (
+    <label className="episode-header-select">
+      <input
+        ref={checkboxRef}
+        type="checkbox"
+        checked={allSelected}
+        disabled={!eligibleEpisodes.length}
+        onChange={(event) => onChange(event.target.checked)}
+        aria-label="Seleccionar todos los episodios elegibles visibles"
+        title="Seleccionar o deseleccionar todos los episodios elegibles de esta vista"
+      />
+      <span>EPISODIO</span>
+    </label>
+  );
+}
+
 function FolderBrowserRow({ folder, matchingIds, onOpen }) {
   const summary = folderEpisodeSummary(folder, matchingIds);
   if (!summary.count) return null;
@@ -537,6 +564,9 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   const [replaceExistingChapters, setReplaceExistingChapters] = useState(false);
   const [activeFolderPath, setActiveFolderPath] = useState(null);
   const [selectedEpisodeId, setSelectedEpisodeId] = useState(null);
+  const [selectionMenuOpen, setSelectionMenuOpen] = useState(false);
+  const selectionMenuRef = useRef(null);
+  const selectionMenuButtonRef = useRef(null);
   const workspaceScrollRef = useRef(null);
   const folderScrollPositionsRef = useRef(new Map());
   const restoreScrollTopRef = useRef(0);
@@ -623,13 +653,35 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     : null;
   const eligibleEpisodes = episodes.filter(isInjectionEligible);
   const scopeEligibleEpisodes = scopeEpisodes.filter(isInjectionEligible);
+  const directEligibleEpisodes = directEpisodes.filter(isInjectionEligible);
   const selectedEligibleEpisodes = eligibleEpisodes.filter((episode) => selectedEpisodeIds.has(episode.id));
+  const scopeEpisodeIds = useMemo(() => new Set(scopeEpisodes.map((episode) => episode.id)), [scopeEpisodes]);
+  const selectedInScopeCount = selectedEligibleEpisodes.filter((episode) => scopeEpisodeIds.has(episode.id)).length;
+  const selectedOutsideScopeCount = selectedEligibleEpisodes.length - selectedInScopeCount;
   useEffect(() => {
     if (activeFolderPath !== null && !findFolderByPath(folderTree, activeFolderPath)) {
       setActiveFolderPath(null);
       setSelectedEpisodeId(null);
     }
   }, [activeFolderPath, folderTree]);
+  useEffect(() => {
+    if (!selectionMenuOpen) return undefined;
+    const closeOnOutsidePointer = (event) => {
+      if (!selectionMenuRef.current?.contains(event.target)) setSelectionMenuOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') {
+        setSelectionMenuOpen(false);
+        selectionMenuButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [selectionMenuOpen]);
   useLayoutEffect(() => {
     if (!selectedEpisodeId && workspaceScrollRef.current) {
       workspaceScrollRef.current.scrollTop = restoreScrollTopRef.current || 0;
@@ -788,6 +840,38 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
       ...current,
       ...scopeEligibleEpisodes.map((episode) => episode.id),
     ]));
+    setSelectionMenuOpen(false);
+  };
+
+  const selectAllSeriesEligible = () => {
+    setSelectedEpisodeIds((current) => new Set([
+      ...current,
+      ...eligibleEpisodes.map((episode) => episode.id),
+    ]));
+    setSelectionMenuOpen(false);
+  };
+
+  const clearScopeSelection = () => {
+    setSelectedEpisodeIds((current) => new Set(
+      [...current].filter((episodeId) => !scopeEpisodeIds.has(episodeId))
+    ));
+    setSelectionMenuOpen(false);
+  };
+
+  const clearSeriesSelection = () => {
+    setSelectedEpisodeIds(new Set());
+    setSelectionMenuOpen(false);
+  };
+
+  const toggleVisibleEpisodeSelection = (checked) => {
+    setSelectedEpisodeIds((current) => {
+      const next = new Set(current);
+      for (const episode of directEligibleEpisodes) {
+        if (checked) next.add(episode.id);
+        else next.delete(episode.id);
+      }
+      return next;
+    });
   };
 
   const startBatchInjection = () => {
@@ -1127,19 +1211,88 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
                 <span className="confidence-review-count">{reviewQueueCount} episodios con avisos</span>
               </div>
               <div className="confidence-batch-actions">
-                <button className="button button-ghost button-small" onClick={() => setStatusFilter('Necesita revisión')} disabled={!reviewQueueCount}>Ver excepciones</button>
-                <button className="button button-secondary button-small" onClick={selectAllEligible} disabled={!scopeEligibleEpisodes.length || active}>
-                  {activeFolderPath ? `Seleccionar en esta carpeta (${scopeEligibleEpisodes.length})` : `Seleccionar elegibles (${scopeEligibleEpisodes.length})`}
+                <button className="button button-ghost button-small" onClick={() => setStatusFilter('Necesita revisión')} disabled={!reviewQueueCount}>
+                  Ver excepciones
                 </button>
-                <button className="button button-primary button-small" onClick={startBatchInjection} disabled={!selectedEligibleEpisodes.length || batchSubmitting || active}>
-                  {batchSubmitting ? 'Preparando…' : `Inyectar seleccionados (${selectedEligibleEpisodes.length})`}
-                </button>
-                {selectedEpisodeIds.size > 0 && <button className="button button-ghost button-small" onClick={() => setSelectedEpisodeIds(new Set())}>Limpiar selección</button>}
+                <div className="selection-menu-wrap" ref={selectionMenuRef}>
+                  <button
+                    ref={selectionMenuButtonRef}
+                    type="button"
+                    className={`button button-secondary button-small selection-menu-trigger ${selectionMenuOpen ? 'is-open' : ''}`}
+                    onClick={() => setSelectionMenuOpen((open) => !open)}
+                    aria-haspopup="menu"
+                    aria-expanded={selectionMenuOpen}
+                    aria-label={`Opciones de selección, ${selectedEligibleEpisodes.length} episodios seleccionados`}
+                    title="Opciones de selección"
+                  >
+                    <ListChecks size={15} />
+                    <span>Selección</span>
+                    <span className="selection-menu-count">{selectedEligibleEpisodes.length}</span>
+                    <ChevronDown size={13} />
+                  </button>
+                  {selectionMenuOpen && (
+                    <div className="selection-menu" role="menu" aria-label="Opciones de selección de episodios">
+                      <button type="button" role="menuitem" onClick={selectAllEligible}
+                        disabled={!scopeEligibleEpisodes.length || active}>
+                        <ListChecks size={14} />
+                        <span>
+                          <strong>{activeFolderPath ? 'Seleccionar en esta carpeta' : 'Seleccionar elegibles'}</strong>
+                          <small>{scopeEligibleEpisodes.length} disponibles en esta vista</small>
+                        </span>
+                      </button>
+                      {activeFolderPath !== null && (
+                        <button type="button" role="menuitem" onClick={selectAllSeriesEligible}
+                          disabled={!eligibleEpisodes.length || active}>
+                          <ListChecks size={14} />
+                          <span>
+                            <strong>Seleccionar en toda la serie</strong>
+                            <small>{eligibleEpisodes.length} elegibles en total</small>
+                          </span>
+                        </button>
+                      )}
+                      {(selectedInScopeCount > 0 || selectedOutsideScopeCount > 0) && <div className="selection-menu-divider" />}
+                      {selectedInScopeCount > 0 && (
+                        <button type="button" role="menuitem" className="selection-menu-danger" onClick={clearScopeSelection}>
+                          <Trash2 size={14} />
+                          <span>
+                            <strong>Limpiar selección actual</strong>
+                            <small>{selectedInScopeCount} de esta vista</small>
+                          </span>
+                        </button>
+                      )}
+                      {selectedOutsideScopeCount > 0 && (
+                        <button type="button" role="menuitem" className="selection-menu-danger" onClick={clearSeriesSelection}>
+                          <Trash2 size={14} />
+                          <span>
+                            <strong>Limpiar toda la serie</strong>
+                            <small>{selectedEligibleEpisodes.length} seleccionados en total</small>
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {selectedEligibleEpisodes.length > 0 && (
+                  <button className="button button-primary button-small" onClick={startBatchInjection}
+                    disabled={batchSubmitting || active}>
+                    {batchSubmitting ? 'Preparando…' : `Inyectar seleccionados (${selectedEligibleEpisodes.length})`}
+                  </button>
+                )}
               </div>
             </div>
 
             {directEpisodes.length > 0 && (
-              <div className="episode-column-head"><span>EPISODIO</span><span>OPENING</span><span>ENDING</span><span>ESTADO</span><span /></div>
+              <div className="episode-column-head">
+                <EpisodeHeaderSelectAll
+                  episodes={directEpisodes}
+                  selectedIds={selectedEpisodeIds}
+                  onChange={toggleVisibleEpisodeSelection}
+                />
+                <span>OPENING</span>
+                <span>ENDING</span>
+                <span>ESTADO</span>
+                <span />
+              </div>
             )}
             <div className="folder-browser-viewport" ref={workspaceScrollRef} aria-label="Carpetas y episodios" tabIndex={0}>
               <div key={activeFolderPath || 'series-root'} className="folder-browser-content workspace-view-transition">
