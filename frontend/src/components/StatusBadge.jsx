@@ -3,7 +3,6 @@ import { AlertTriangle, Check, Clock3, LoaderCircle, CircleX, SkipForward } from
 const config = {
   Listo: { tone: 'success', icon: Check },
   'Listo · revisar': { tone: 'warning', icon: AlertTriangle },
-  'Listo · revisar': { tone: 'warning', icon: AlertTriangle },
   Conectado: { tone: 'success', icon: Check },
   Configurado: { tone: 'success', icon: Check },
   Outliers: { tone: 'warning', icon: AlertTriangle },

@@ -127,7 +127,7 @@ function EpisodeRow({
   const badgeStatus = episode.review_status === 'REVIEW_RECOMMENDED' && canInject
     ? 'Listo · revisar'
     : injected ? 'Listo' : episode.status;
-  const bandClass = (band) => \`confidence-inline confidence-\${String(band || 'unassessed').toLowerCase()}\`;
+  const bandClass = (band) => `confidence-inline confidence-${String(band || 'unassessed').toLowerCase()}`;
 
   const renderCompactConfidence = (segment) => {
     if (!segment) {
@@ -145,7 +145,7 @@ function EpisodeRow({
   };
 
   return (
-    <article className={\`episode-browser-row \${isProcessing ? 'episode-row-processing' : ''}\`}>
+    <article className={`episode-browser-row ${isProcessing ? 'episode-row-processing' : ''}`}>
       <div className="episode-browser-main">
         <div className="episode-browser-id">
           <input
@@ -154,7 +154,7 @@ function EpisodeRow({
             checked={selected}
             disabled={!canInject || reviewLocked}
             onChange={() => onToggleSelection?.(episode)}
-            aria-label={\`Seleccionar \${episode.file_name} para inyección masiva\`}
+            aria-label={`Seleccionar ${episode.file_name} para inyección masiva`}
             title={canInject ? 'Seleccionar para inyección masiva' : 'Este episodio no está disponible para inyección'}
           />
           <button type="button" className="episode-browser-open" onClick={() => onOpen?.(episode)}>
@@ -174,7 +174,7 @@ function EpisodeRow({
         </div>
         <div className="episode-browser-status"><StatusBadge status={badgeStatus} /></div>
         <button type="button" className="icon-button episode-open-button" onClick={() => onOpen?.(episode)}
-          aria-label={\`Abrir \${episode.displayId || episode.file_name}\`} title="Abrir episodio">
+          aria-label={`Abrir ${episode.displayId || episode.file_name}`} title="Abrir episodio">
           <ChevronRight size={17} />
         </button>
       </div>
@@ -216,7 +216,7 @@ function EpisodeWorkspace({
     const label = kind === 'OP' ? 'Opening' : 'Ending';
     if (!episode[kind.toLowerCase()]) return;
     const accepted = window.confirm(
-      \`¿Descartar la detección de \${label} de \${episode.file_name}?\n\nEl timestamp original se conservará en el historial y no se incluirá en los capítulos.\`
+      `¿Descartar la detección de ${label} de ${episode.file_name}?\n\nEl timestamp original se conservará en el historial y no se incluirá en los capítulos.`
     );
     if (!accepted) return;
     onCorrect(episode, kind === 'OP'
@@ -231,7 +231,7 @@ function EpisodeWorkspace({
       const numericEnd = Number(end);
       if (!Number.isFinite(numericStart) || !Number.isFinite(numericEnd)
         || numericStart < 0 || numericStart >= numericEnd) {
-        throw new Error(\`\${label}: introduce valores numéricos donde el inicio sea menor que el final.\`);
+        throw new Error(`${label}: introduce valores numéricos donde el inicio sea menor que el final.`);
       }
       return { ...(existing || {}), name: existing?.name || label, start: numericStart, end: numericEnd };
     };
@@ -251,12 +251,12 @@ function EpisodeWorkspace({
       <div className="episode-time-editor-fields">
         <label>
           <span>Inicio</span>
-          <input aria-label={\`\${label} inicio en segundos\`} type="number" min="0" step="0.01"
+          <input aria-label={`${label} inicio en segundos`} type="number" min="0" step="0.01"
             value={start} disabled={reviewLocked} onChange={(event) => setStart(event.target.value)} placeholder="Inicio" />
         </label>
         <label>
           <span>Final</span>
-          <input aria-label={\`\${label} final en segundos\`} type="number" min="0" step="0.01"
+          <input aria-label={`${label} final en segundos`} type="number" min="0" step="0.01"
             value={end} disabled={reviewLocked} onChange={(event) => setEnd(event.target.value)} placeholder="Final" />
         </label>
       </div>
@@ -290,7 +290,7 @@ function EpisodeWorkspace({
           <section className="episode-workspace-segment">
             <div className="episode-workspace-segment-heading">
               <div><span className="panel-eyebrow">DETECCIÓN 01</span><h3>Opening</h3></div>
-              <strong>{episode.op ? \`\${formatTimestamp(episode.op.start)}–\${formatTimestamp(episode.op.end)}\` : 'Sin coincidencia'}</strong>
+              <strong>{episode.op ? `${formatTimestamp(episode.op.start)}–${formatTimestamp(episode.op.end)}` : 'Sin coincidencia'}</strong>
             </div>
             <ConfidenceDetail label="Opening" segment={episode.op} original={episode.original_op}
               anomaly={showOutliers && episode.is_anomaly_op} />
@@ -300,7 +300,7 @@ function EpisodeWorkspace({
           <section className="episode-workspace-segment">
             <div className="episode-workspace-segment-heading">
               <div><span className="panel-eyebrow">DETECCIÓN 02</span><h3>Ending</h3></div>
-              <strong>{episode.ed ? \`\${formatTimestamp(episode.ed.start)}–\${formatTimestamp(episode.ed.end)}\` : 'Sin coincidencia'}</strong>
+              <strong>{episode.ed ? `${formatTimestamp(episode.ed.start)}–${formatTimestamp(episode.ed.end)}` : 'Sin coincidencia'}</strong>
             </div>
             <ConfidenceDetail label="Ending" segment={episode.ed} original={episode.original_ed}
               anomaly={showOutliers && episode.is_anomaly_ed} />
@@ -425,12 +425,12 @@ function FolderBrowserRow({ folder, matchingIds, onOpen }) {
       <span className="folder-browser-copy">
         <strong>{folder.name}</strong>
         <small>{summary.count} {summary.count === 1 ? 'episodio' : 'episodios'}
-          {folder.folders.size ? \` · \${folder.folders.size} subcarpetas\` : ''}
+          {folder.folders.size ? ` · ${folder.folders.size} subcarpetas` : ''}
         </small>
       </span>
       <span className="folder-browser-status">
         <strong>{summary.ready} listos</strong>
-        {summary.review > 0 && <small>{summary.required > 0 ? \`\${summary.required} requieren revisión\` : \`\${summary.review} con avisos\`}</small>}
+        {summary.review > 0 && <small>{summary.required > 0 ? `${summary.required} requieren revisión` : `${summary.review} con avisos`}</small>}
       </span>
       <ChevronRight size={17} />
     </button>
@@ -1042,7 +1042,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
                 <div>
                   <h2>{activeFolderPath ? currentFolder?.name : 'Carpetas de la serie'}</h2>
                   <p>{activeFolderPath
-                    ? \`\${childFolders.length} subcarpetas · \${scopeEpisodes.length} episodios en esta ubicación\`
+                    ? `${childFolders.length} subcarpetas · ${scopeEpisodes.length} episodios en esta ubicación`
                     : 'Selecciona una carpeta para explorar sus episodios'}
                   </p>
                 </div>
@@ -1065,10 +1065,10 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
               <div className="confidence-batch-actions">
                 <button className="button button-ghost button-small" onClick={() => setStatusFilter('Necesita revisión')} disabled={!reviewQueueCount}>Ver excepciones</button>
                 <button className="button button-secondary button-small" onClick={selectAllEligible} disabled={!scopeEligibleEpisodes.length || active}>
-                  {activeFolderPath ? \`Seleccionar elegibles (\${scopeEligibleEpisodes.length})\` : \`Seleccionar elegibles (\${scopeEligibleEpisodes.length})\`}
+                  {activeFolderPath ? `Seleccionar elegibles (${scopeEligibleEpisodes.length})` : `Seleccionar elegibles (${scopeEligibleEpisodes.length})`}
                 </button>
                 <button className="button button-primary button-small" onClick={startBatchInjection} disabled={!selectedEligibleEpisodes.length || batchSubmitting || active}>
-                  {batchSubmitting ? 'Preparando…' : \`Inyectar seleccionados (\${selectedEligibleEpisodes.length})\`}
+                  {batchSubmitting ? 'Preparando…' : `Inyectar seleccionados (${selectedEligibleEpisodes.length})`}
                 </button>
                 {selectedEpisodeIds.size > 0 && <button className="button button-ghost button-small" onClick={() => setSelectedEpisodeIds(new Set())}>Limpiar selección</button>}
               </div>
