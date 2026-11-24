@@ -8,7 +8,7 @@ Aplicación local modular, desplegada como un único backend FastAPI y un fronte
 
 - `frontend`: presentación, navegación y estado de pantalla. No contiene lógica de análisis ni de escritura MKV.
 - `backend/api/routers`: HTTP, validación y traducción de errores.
-- `backend/services`: casos de uso de biblioteca, análisis, jobs, templates y logs.
+- `backend/services`: casos de uso de biblioteca, análisis, jobs, templates, preparación de herramientas y logs.
 - `backend/infrastructure`: rutas de datos, SQLite, logging y configuración.
 - `core`: algoritmo de detección, fingerprints y operaciones multimedia.
 - `migration`: snapshot del JSON legacy; nunca se modifica automáticamente.

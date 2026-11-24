@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sys
+import uuid
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -72,7 +73,15 @@ def _merge_directory_without_overwrite(source: Path, target: Path) -> None:
             destination.mkdir(parents=True, exist_ok=True)
         elif item.is_file() and not destination.exists():
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item, destination)
+            # Stage each potentially large media/tool file before publishing it.
+            # If the process stops mid-copy, the next launch can safely retry.
+            temporary = destination.with_name(f".{destination.name}.migration-{uuid.uuid4().hex[:8]}.tmp")
+            try:
+                shutil.copy2(item, temporary)
+                if not destination.exists():
+                    temporary.replace(destination)
+            finally:
+                temporary.unlink(missing_ok=True)
 
 
 def _persist_config(path: Path, config: dict[str, Any]) -> None:

@@ -45,8 +45,7 @@ tests/                  Pruebas automatizadas
 - Windows 10/11 (objetivo prioritario).
 - Python 3.11 o superior.
 - Node.js 20 o superior y npm, necesarios para instalar/build del frontend desde el código fuente.
-- FFmpeg y FFprobe accesibles desde `PATH` o desde el directorio configurado `plugins_path`.
-- MKVToolNix (`mkvmerge` y `mkvpropedit`) para consultar capítulos existentes e inyectarlos.
+- En Windows x64, FFmpeg/FFprobe y MKVToolNix se preparan automáticamente en `plugins/` durante el primer arranque. En otros sistemas, deben estar instalados en `plugins_path` o en `PATH`.
 
 En Windows x64, el backend prepara automáticamente FFmpeg/FFprobe y MKVToolNix al iniciar cuando faltan en `plugins_path`. Las descargas se verifican mediante SHA-256, se extraen en un directorio temporal con validación de rutas y solo se activan después de superar una comprobación de versión. Si la instalación falla, el backend sigue disponible para las funciones que no dependan de esas herramientas y comunica el error en Settings. En otras plataformas se requiere que estén instaladas en `plugins_path` o en `PATH`.
 - Conexión a Internet para consultar AnimeThemes y descargar templates.

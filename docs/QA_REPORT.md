@@ -38,6 +38,21 @@
 
 Las pruebas se ejecutaron en el entorno Python disponible durante la construcción. La configuración de Windows indicada en `setup_windows.bat` todavía debe validarse en un equipo Windows real.
 
+
+## Validación añadida para la recuperación de funcionalidades CLI
+
+La rama `feature/recover-cli-workflows` incorpora nuevas pruebas para:
+
+- Los valores predeterminados de `Templates/` y `plugins/` bajo la raíz del proyecto.
+- La migración no destructiva desde las carpetas anteriores de AppData y desde el directorio `template/` del CLI.
+- La creación de `video_files` y `songs_files` y la conservación de WAV manuales/manifiestos durante una nueva descarga.
+- La protección del contrato del motor OP/ED (`0.68`, 22.050 Hz, chroma, correlación y filtro ED del 70 %).
+- La extracción segura de ZIP y la recuperación de carpetas de plugins tras una interrupción.
+- Los nombres de capítulos históricos y el idioma `spa/es`, manteniendo backup, verificación y rollback.
+
+**Estado de esta rama:** las pruebas nuevas están escritas, pero todavía no se marcan como aprobadas. El workflow de GitHub Actions ejecutará `compileall`, `pytest`, `npm test` y `npm run build`. La instalación real de herramientas, las descargas y la inyección sobre archivos MKV deben validarse en Windows; no se simulan como pruebas de producción.
+
+
 ## Comprobaciones pendientes
 
 - No se completó `npm ci` ni `vite build` en este entorno: `npm ci --offline` no pudo recuperar paquetes que no están en la caché local. Se intentó reutilizar el `node_modules` incluido en el ZIP de referencia, pero contiene dependencias nativas de Windows y no incluye el binario opcional de Rollup para Linux. El ZIP incluye `package-lock.json`; `setup_windows.ps1` ejecutará `npm ci` y `npm run build` en el equipo Windows de destino.
