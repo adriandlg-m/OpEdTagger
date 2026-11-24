@@ -13,7 +13,7 @@ from backend.infrastructure.config import load_config
 from backend.infrastructure.database import init_db
 from backend.infrastructure.logging_config import configure_logging
 from backend.services.job_service import job_service
-from backend.services.plugin_manager import ensure_required_plugins
+from backend.services.plugin_manager import start_background_analysis_setup
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,14 +23,10 @@ async def lifespan(app: FastAPI):
     cfg = load_config()
     configure_logging()
     init_db()
-    # Preserve the CLI's zero-interaction dependency preparation. A download
-    # failure is reported in system health but does not make read-only UI/API
-    # features unavailable; the next launch retries the incomplete setup.
-    plugin_state = ensure_required_plugins(cfg)
-    if plugin_state.get("status") == "ready":
-        logging.getLogger(__name__).info("Multimedia tools are ready.")
-    else:
-        logging.getLogger(__name__).warning("Multimedia tool setup status: %s", plugin_state)
+    # Keep the GUI responsive while the first-run FFmpeg/FFprobe setup runs.
+    # Analysis jobs acquire the plugin manager lock and wait for this setup.
+    plugin_state = start_background_analysis_setup(cfg)
+    logging.getLogger(__name__).info("Background multimedia tool setup started: %s", plugin_state.get("status"))
     job_service.recover_interrupted_jobs()
     logging.getLogger(__name__).info("OpEdTagger backend started")
     yield
