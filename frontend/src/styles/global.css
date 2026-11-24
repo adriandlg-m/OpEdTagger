@@ -5111,3 +5111,77 @@ button:disabled {
   font-size: 10px;
   line-height: 1.4;
 }
+
+
+/* Keep the episode review focused; expose raw confidence evidence on demand. */
+.detail-page .confidence-evidence-disclosure {
+  min-width: 0;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 9px;
+}
+.detail-page .confidence-evidence-disclosure > summary {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+.detail-page .confidence-evidence-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.detail-page .confidence-evidence-disclosure > summary::before {
+  content: '+';
+  display: inline-grid;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--surface-3);
+  color: var(--accent);
+  font-size: 13px;
+  line-height: 1;
+}
+.detail-page .confidence-evidence-disclosure[open] > summary::before {
+  content: '−';
+}
+.detail-page .confidence-evidence-disclosure > summary span {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-align: right;
+}
+.detail-page .confidence-evidence-disclosure > summary:hover {
+  color: var(--text);
+}
+.detail-page .confidence-evidence-content {
+  display: grid;
+  gap: 8px;
+  padding: 8px 0 2px 26px;
+}
+.detail-page .confidence-evidence-content .confidence-factor-list {
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.detail-page .confidence-evidence-content ul {
+  margin: 0;
+  padding-left: 17px;
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 1.55;
+}
+.detail-page .confidence-evidence-content li + li {
+  margin-top: 3px;
+}
+.detail-page .confidence-evidence-disclosure:focus-within > summary {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}

@@ -112,6 +112,13 @@ function ConfidenceDetail({ label, segment, original, anomaly }) {
   const temporalBand = segment.temporal_precision_band || 'UNASSESSED';
   const factors = segment.confidence_factors || {};
   const reasons = Array.isArray(factors.reasons) ? factors.reasons : [];
+  const technicalFactors = [
+    { key: 'similarity', label: 'Similitud' },
+    { key: 'template_margin', label: 'Separación de templates' },
+    { key: 'peak_clarity', label: 'Distinción de otras posiciones' },
+    { key: 'peak_width_seconds', label: 'Ancho del pico', suffix: ' s' },
+    { key: 'temporal_consistency', label: 'Consistencia entre episodios' },
+  ].filter(({ key }) => factors[key] !== null && factors[key] !== undefined);
   const changed = original && (
     Number(original.start) !== Number(segment.start)
     || Number(original.end) !== Number(segment.end)
@@ -137,14 +144,24 @@ function ConfidenceDetail({ label, segment, original, anomaly }) {
           detail="Evalúa qué tan definido está el inicio. El final se calcula usando la duración del template."
         />
       </div>
-      <div className="confidence-factor-list">
-        {factors.similarity !== null && factors.similarity !== undefined && <span>Similitud {Number(factors.similarity).toFixed(3)}</span>}
-        {factors.template_margin !== null && factors.template_margin !== undefined && <span>Separación de templates {Number(factors.template_margin).toFixed(3)}</span>}
-        {factors.peak_clarity !== null && factors.peak_clarity !== undefined && <span>Distinción de otras posiciones {Number(factors.peak_clarity).toFixed(3)}</span>}
-        {factors.peak_width_seconds !== null && factors.peak_width_seconds !== undefined && <span>Ancho del pico {Number(factors.peak_width_seconds).toFixed(3)} s</span>}
-        {factors.temporal_consistency !== null && factors.temporal_consistency !== undefined && <span>Consistencia entre episodios {Number(factors.temporal_consistency).toFixed(3)}</span>}
-      </div>
-      {reasons.length > 0 && <ul>{reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul>}
+      {(technicalFactors.length > 0 || reasons.length > 0) && (
+        <details className="confidence-evidence-disclosure">
+          <summary>
+            Detalles técnicos
+            <span>{technicalFactors.length} factores{reasons.length ? ` · ${reasons.length} observaciones` : ''}</span>
+          </summary>
+          <div className="confidence-evidence-content">
+            {technicalFactors.length > 0 && (
+              <div className="confidence-factor-list">
+                {technicalFactors.map(({ key, label: factorLabel, suffix = '' }) => (
+                  <span key={key}>{factorLabel} {Number(factors[key]).toFixed(3)}{suffix}</span>
+                ))}
+              </div>
+            )}
+            {reasons.length > 0 && <ul>{reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul>}
+          </div>
+        </details>
+      )}
       {changed && <p className="confidence-original-value">Detección original: {formatTimestamp(original.start)}–{formatTimestamp(original.end)}</p>}
     </div>
   );
@@ -399,10 +416,10 @@ function EpisodeWorkspace({
 
           <section className="episode-workspace-actions">
             <span className="panel-eyebrow">ACCIONES</span>
-            {hasResult && (
+            {hasResult && hasPendingCorrections && (
               <button className="button button-secondary" onClick={saveCorrections}
-                disabled={reviewLocked || savingCorrections || !hasPendingCorrections}>
-                {savingCorrections ? 'Guardando…' : hasPendingCorrections ? 'Guardar correcciones' : 'Sin cambios'}
+                disabled={reviewLocked || savingCorrections}>
+                {savingCorrections ? 'Guardando…' : 'Guardar correcciones'}
               </button>
             )}
             {episode.op && <button className="button button-danger-ghost" onClick={() => discardSegment('OP')} disabled={reviewLocked}>Descartar Opening</button>}
@@ -820,7 +837,18 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
             : activeFolderPath
               ? 'Contenido de esta carpeta. Selecciona un episodio para abrir su espacio de revisión.'
               : 'Explora la biblioteca por carpetas y abre cada episodio para consultar o corregir sus detecciones.'}
-          eyebrow="BIBLIOTECA / SERIE" actions={active ? <button className="button button-danger-ghost" onClick={() => onCancelProcessing(activeJob?.id)}><XCircle size={15} /> {isInjectionJob ? 'Cancelar inyección' : 'Cancelar análisis'}</button> : <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="button button-secondary" onClick={openPosterSearch}><ImagePlus size={15} /> {posterUrl ? 'Cambiar carátula' : 'Buscar carátula'}</button><button className="button button-primary" onClick={onStartProcessing}><Play size={15} fill="currentColor" /> Analizar serie</button></div>} />
+          eyebrow="BIBLIOTECA / SERIE" actions={active
+            ? <button className="button button-danger-ghost" onClick={() => onCancelProcessing(activeJob?.id)}><XCircle size={15} /> {isInjectionJob ? 'Cancelar inyección' : 'Cancelar análisis'}</button>
+            : <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {activeFolderPath === null && selectedEpisodeId === null && (
+                  <button className="button button-secondary" onClick={openPosterSearch}>
+                    <ImagePlus size={15} /> {posterUrl ? 'Cambiar carátula' : 'Buscar carátula'}
+                  </button>
+                )}
+                <button className="button button-primary" onClick={onStartProcessing}>
+                  <Play size={15} fill="currentColor" /> Analizar serie
+                </button>
+              </div>} />
 
         {posterModalOpen && <PosterSearchModal
           seriesName={series.name || series.title}
