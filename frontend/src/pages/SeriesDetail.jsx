@@ -258,10 +258,16 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     queued: 'En cola',
     initializing: 'Iniciando análisis',
     preparing_dependencies: 'Preparando herramientas multimedia',
-    preparing_templates: 'Sincronizando y preparando templates OP/ED',
+    searching_templates: 'Consultando AnimeThemes',
+    loading_template_metadata: 'Obteniendo información de OP/ED',
+    downloading_templates: 'Descargando templates OP/ED',
+    converting_templates: 'Convirtiendo vídeos a WAV',
+    validating_templates: 'Validando plantillas de audio',
     analyzing_episodes: 'Analizando episodios',
     cancellation_requested: 'Solicitando cancelación',
     cancelling: 'Cancelando análisis',
+    failed: 'Análisis fallido',
+    cancelled: 'Análisis cancelado',
   })[activeJob?.stage] || activeJob?.stage || 'Procesamiento';
 
   const openPosterSearch = () => setPosterModalOpen(true);
@@ -440,10 +446,29 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
           />
         )}
 
-        {active && <section className="panel" style={{ padding: 16, marginBottom: 16 }}>
-          <div className="progress-heading"><span>{activeStageLabel} · {activeJob.current_item || 'Preparando…'}</span><strong>{Math.round(activeJob.progress || 0)}%</strong></div>
-          <div className="progress-track"><span style={{ width: `${Math.min(100, activeJob.progress || 0)}%` }} /></div>
-        </section>}      </div>
+        {active && <section className="panel series-processing-progress" style={{ padding: 16, marginBottom: 16 }} aria-live="polite">
+          <div className="progress-heading">
+            <span>{activeStageLabel}</span>
+            <strong>{Math.round(activeJob.progress || 0)}%</strong>
+          </div>
+          <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(activeJob.progress || 0)}>
+            <span style={{ width: `${Math.min(100, activeJob.progress || 0)}%` }} />
+          </div>
+          <p className="processing-current-item">{activeJob.current_item || 'Preparando…'}</p>
+        </section>}
+        {!active && activeJob?.kind === 'series' && activeJob.series_name === series.name && activeJob.status === 'failed' && (
+          <section className="panel series-processing-error" role="alert" style={{ padding: 16, marginBottom: 16 }}>
+            <strong>No se pudo completar el análisis de la serie.</strong>
+            <p>{activeJob.error || 'El trabajo terminó con un error sin descripción. Revisa los logs de OpEdTagger.'}</p>
+          </section>
+        )}
+        {!active && activeJob?.kind === 'series' && activeJob.series_name === series.name && activeJob.status === 'cancelled' && (
+          <section className="panel series-processing-error" role="status" style={{ padding: 16, marginBottom: 16 }}>
+            <strong>El análisis fue cancelado.</strong>
+            <p>{activeJob.error || 'La cancelación fue solicitada.'}</p>
+          </section>
+        )}
+      </div>
 
       <section className="panel episodes-panel">
         <div className="panel-toolbar episode-toolbar">
