@@ -4,6 +4,7 @@ import json
 import logging
 import statistics
 import threading
+import wave
 from pathlib import Path
 from typing import Callable
 
@@ -12,6 +13,7 @@ from backend.infrastructure.database import db_session, utc_now
 from backend.services.library_service import scan_library, get_series_detail
 from backend.services.log_service import log_event
 from backend.services.template_service import ensure_templates
+from backend.services.plugin_manager import ensure_analysis_plugins
 from core.analyzer import evaluate_episode_templates, prepare_song_templates
 from core.fingerprints import ANALYZER_VERSION, file_fingerprint, templates_signature
 from core.media_tools import build_chapters, get_mkv_duration
@@ -128,12 +130,46 @@ def _find_episode_id(path: Path) -> int | None:
     return int(row["id"]) if row else None
 
 
+def _validate_wav_templates(wav_templates: list[Path], series_name: str) -> list[Path]:
+    """Exclude broken/empty WAVs before they reach the protected detector."""
+    valid: list[Path] = []
+    invalid: list[str] = []
+    for template in wav_templates:
+        try:
+            with wave.open(str(template), "rb") as audio:
+                if audio.getnframes() <= 0 or audio.getframerate() <= 0 or audio.getnchannels() <= 0:
+                    raise wave.Error("WAV has no usable audio frames.")
+                if audio.getsampwidth() not in {1, 2, 3, 4}:
+                    raise wave.Error("WAV has an unsupported sample width.")
+            valid.append(template)
+        except (OSError, EOFError, wave.Error) as exc:
+            invalid.append(f"{template.name} ({exc})")
+
+    if invalid:
+        logger.warning("Ignoring invalid WAV templates for %s: %s", series_name, "; ".join(invalid))
+    if not valid:
+        detail = "; ".join(invalid[:8]) if invalid else "No WAV files were generated."
+        raise RuntimeError(
+            f"No valid WAV templates are available for '{series_name}'. "
+            f"Check the downloaded videos and FFmpeg conversion. {detail}"
+        )
+    return valid
+
+
 def _get_templates(series_name: str, selected_slug: str | None, progress: Callable | None = None) -> tuple[list[Path], str]:
     cfg = load_config()
+    plugin_state = ensure_analysis_plugins(cfg)
+    if plugin_state.get("status") not in {"ready", "analysis_ready"}:
+        reason = plugin_state.get("last_error") or plugin_state.get("message") or "FFmpeg/FFprobe are unavailable."
+        raise RuntimeError(f"Multimedia tools are not ready: {reason}")
+
     template_dir = ensure_templates(series_name, selected_slug, progress)
-    wav_templates = prepare_song_templates(template_dir, Path(cfg["plugins_path"]).expanduser().resolve(), on_template_progress=progress)
-    if not wav_templates:
-        raise RuntimeError(f"No usable WAV templates are available for '{series_name}'. Check FFmpeg and the template files.")
+    wav_templates = prepare_song_templates(
+        template_dir,
+        Path(cfg["plugins_path"]).expanduser().resolve(),
+        on_template_progress=progress,
+    )
+    wav_templates = _validate_wav_templates(wav_templates, series_name)
     return wav_templates, templates_signature(wav_templates)
 
 
@@ -214,7 +250,7 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
     episodes = detail["episodes"]
     if not episodes:
         raise RuntimeError(f"No MKV files were found for '{series_name}'.")
-    update_job(stage="preparing_templates", total_items=len(episodes), progress=0)
+    update_job(stage="preparing_dependencies", current_item="FFmpeg / FFprobe", total_items=len(episodes), progress=0)
     if cancel_event.is_set():
         for index, episode in enumerate(episodes):
             update_job(item_index=index, item_status="cancelled", item_progress=0,
