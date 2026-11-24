@@ -303,7 +303,10 @@ def _apply_anomalies(series_name: str) -> None:
                 current_segment = original_segment = None
             current[kind] = current_segment
             original[kind] = original_segment
-            if original_segment:
+            # Keep dismissed and manually verified detections out of the
+            # automatic outlier baseline. Their original values remain available
+            # for audit, but must not influence current anomaly counts.
+            if original_segment and current_segment and not current_segment.get("manual_verified"):
                 key = (kind, str(original_segment.get("name") or kind))
                 groups.setdefault(key, []).append({
                     "episode_id": int(row["episode_id"]),
@@ -349,6 +352,8 @@ def _apply_anomalies(series_name: str) -> None:
                 current_segment = record["current"][kind]
                 original_segment = record["original"][kind]
                 assessed, anomalous = assessments.get((record["episode_id"], kind), (None, False))
+                if current_segment is None or (current_segment and current_segment.get("manual_verified")):
+                    anomalous = False
                 if assessed is not None:
                     if current_segment is not None:
                         current_segment = {

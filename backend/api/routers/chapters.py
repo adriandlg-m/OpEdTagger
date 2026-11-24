@@ -95,9 +95,9 @@ def review_episode(episode_id: int, body: ReviewUpdate):
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"Review validation failed: {exc}") from exc
 
-        timestamps_changed = any(
-            previous[kind] != updated[kind] for kind in ("OP", "ED")
-        )
+        changed_op = previous["OP"] != updated["OP"]
+        changed_ed = previous["ED"] != updated["ED"]
+        timestamps_changed = changed_op or changed_ed
         if body.approved:
             review_status = "APPROVED"
         else:
@@ -121,6 +121,8 @@ def review_episode(episode_id: int, body: ReviewUpdate):
                 )
             write = conn.execute(
                 "UPDATE analysis_results SET op_json=?,ed_json=?,analysis_status=?,review_status=?,"
+                "is_anomaly_op=CASE WHEN ? THEN 0 ELSE is_anomaly_op END,"
+                "is_anomaly_ed=CASE WHEN ? THEN 0 ELSE is_anomaly_ed END,"
                 "injection_status=CASE WHEN ? THEN 'NOT_REQUESTED' ELSE injection_status END,updated_at=? "
                 "WHERE episode_id=? AND injection_status NOT IN ('IN_PROGRESS','RECOVERY_REQUIRED')",
                 (
@@ -128,6 +130,8 @@ def review_episode(episode_id: int, body: ReviewUpdate):
                     json.dumps(updated["ED"], ensure_ascii=False) if updated["ED"] else None,
                     analysis_status,
                     review_status,
+                    int(changed_op),
+                    int(changed_ed),
                     int(timestamps_changed),
                     utc_now(),
                     episode_id,

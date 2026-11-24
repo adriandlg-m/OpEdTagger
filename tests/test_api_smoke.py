@@ -194,13 +194,13 @@ def test_manual_correction_preserves_original_detection_and_records_history(tmp_
         conn.execute(
             "INSERT INTO analysis_results(episode_id,analysis_status,review_status,injection_status,"
             "op_json,op_original_json,confidence_version,analyzer_version,template_signature,"
-            "analyzed_file_size,analyzed_file_mtime,content_fingerprint,source,created_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "analyzed_file_size,analyzed_file_mtime,content_fingerprint,source,is_anomaly_op,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 episode_id, "COMPLETED", "PENDING", "NOT_REQUESTED",
                 json.dumps({**original, "confidence_score": 42, "confidence_band": "LOW"}),
                 json.dumps(original), "heuristic-confidence-v1", ANALYZER_VERSION,
-                "signature", stat.st_size, stat.st_mtime, file_fingerprint(video), "engine", stamp, stamp,
+                "signature", stat.st_size, stat.st_mtime, file_fingerprint(video), "engine", 1, stamp, stamp,
             ),
         )
 
@@ -221,7 +221,7 @@ def test_manual_correction_preserves_original_detection_and_records_history(tmp_
 
     with db_session() as conn:
         row = conn.execute(
-            "SELECT op_json,op_original_json,review_status FROM analysis_results WHERE episode_id=?",
+            "SELECT op_json,op_original_json,review_status,is_anomaly_op FROM analysis_results WHERE episode_id=?",
             (episode_id,),
         ).fetchone()
         history = conn.execute(
@@ -236,6 +236,7 @@ def test_manual_correction_preserves_original_detection_and_records_history(tmp_
     assert current["manual_verified"] is True
     assert preserved_original == original
     assert row["review_status"] == "MANUALLY_REVIEWED"
+    assert row["is_anomaly_op"] == 0
     assert len(history) == 1
     assert history[0]["segment_type"] == "OP"
     assert history[0]["action"] == "CORRECTED"
