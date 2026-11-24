@@ -69,14 +69,18 @@ def test_ensure_templates_synchronizes_all_cli_matches_automatically(tmp_path, m
             "animethemes": [],
         }}},
     )
-    monkeypatch.setattr(
-        template_service,
-        "_download_anime_rows_templates_impl",
-        lambda _name, rows, _progress=None: (
-            downloaded.extend(item["slug"] for item in rows)
-            or {"audio_preparation_error": None, "audio_preparation_warning": None}
-        ),
-    )
+    def fake_sync(name, rows, _progress=None):
+        downloaded.extend(item["slug"] for item in rows)
+        songs = template_root / name / "songs_files"
+        songs.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(songs / "OP1.wav"), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(22050)
+            audio.writeframes(b"\\x00\\x00" * 220)
+        return {"audio_preparation_error": None, "audio_preparation_warning": None, "files": ["OP1.webm"]}
+
+    monkeypatch.setattr(template_service, "_download_anime_rows_templates_impl", fake_sync)
 
     result = template_service.ensure_templates("My Show (2022) [1080p]")
 
@@ -125,14 +129,18 @@ def test_legacy_cli_video_templates_are_synchronized_when_manifest_is_missing(tm
         "_fetch_anime_details",
         lambda _slug, **_kwargs: {"data": {"anime": {**anime_row, "animethemes": []}}},
     )
-    monkeypatch.setattr(
-        template_service,
-        "_download_anime_rows_templates_impl",
-        lambda _name, rows, _progress=None: (
-            seen.extend(row["slug"] for row in rows)
-            or {"audio_preparation_error": None, "audio_preparation_warning": None}
-        ),
-    )
+    def fake_sync(name, rows, _progress=None):
+        seen.extend(row["slug"] for row in rows)
+        songs = template_root / name / "songs_files"
+        songs.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(songs / "OP1.wav"), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(22050)
+            audio.writeframes(b"\\x00\\x00" * 220)
+        return {"audio_preparation_error": None, "audio_preparation_warning": None, "files": ["OP1.webm"]}
+
+    monkeypatch.setattr(template_service, "_download_anime_rows_templates_impl", fake_sync)
 
     result = template_service.ensure_templates("Legacy Show")
 
