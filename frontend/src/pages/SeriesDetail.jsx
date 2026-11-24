@@ -446,16 +446,30 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
           />
         )}
 
-        {active && <section className="panel series-processing-progress" style={{ padding: 16, marginBottom: 16 }} aria-live="polite">
-          <div className="progress-heading">
-            <span>{activeStageLabel}</span>
-            <strong>{Math.round(activeJob.progress || 0)}%</strong>
-          </div>
-          <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(activeJob.progress || 0)}>
-            <span style={{ width: `${Math.min(100, activeJob.progress || 0)}%` }} />
-          </div>
-          <p className="processing-current-item">{activeJob.current_item || 'Preparando…'}</p>
-        </section>}
+        {active && (() => {
+          const percentage = Math.round(activeJob.progress || 0);
+          const indeterminate = ['searching_templates', 'loading_template_metadata'].includes(activeJob.stage)
+            || (activeJob.stage === 'downloading_templates' && /tamaño desconocido/i.test(activeJob.current_item || ''));
+          return (
+            <section className="panel series-processing-progress" style={{ padding: 16, marginBottom: 16 }} aria-live="polite">
+              <div className="progress-heading">
+                <span>{activeStageLabel}</span>
+                <strong>{indeterminate ? 'En curso' : `${percentage}%`}</strong>
+              </div>
+              <div
+                className={`progress-track ${indeterminate ? 'progress-track-indeterminate' : ''}`}
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={indeterminate ? undefined : percentage}
+                aria-valuetext={indeterminate ? activeStageLabel : `${percentage}%`}
+              >
+                <span style={indeterminate ? undefined : { width: `${Math.min(100, percentage)}%` }} />
+              </div>
+              <p className="processing-current-item">{activeJob.current_item || 'Preparando…'}</p>
+            </section>
+          );
+        })()}
         {!active && activeJob?.kind === 'series' && activeJob.series_name === series.name && activeJob.status === 'failed' && (
           <section className="panel series-processing-error" role="alert" style={{ padding: 16, marginBottom: 16 }}>
             <strong>No se pudo completar el análisis de la serie.</strong>
