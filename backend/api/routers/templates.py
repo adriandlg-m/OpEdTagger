@@ -24,5 +24,7 @@ def download_templates(body: TemplateDownloadRequest):
         result = download_selected_templates(body.series_name.strip(), body.anime_slug.strip())
         log_event("INFO", "Templates", "AnimeThemes templates downloaded.", detail=str(result), series_name=body.series_name)
         return result
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
