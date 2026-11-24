@@ -401,47 +401,51 @@ def _download(
 def _download_anime_rows_templates_impl(
     series_name: str,
     anime_rows: list[dict],
-    progress: Callable[[int, int, str], None] | None = None,
+    progress: Callable[[str, float, str], None] | None = None,
 ) -> dict:
-    """Synchronize OP/ED videos for all CLI-matched AnimeThemes results."""
+    """Synchronize OP/ED videos returned by the current AnimeThemes GraphQL API."""
     if not anime_rows:
-        raise RuntimeError(f"No AnimeThemes entries were available for '{series_name}'.")
+        raise RuntimeError(f"AnimeThemes no devolvió series para '{series_name}'.")
 
     primary = anime_rows[0]
     slugs = [str(item.get("slug")) for item in anime_rows if item.get("slug")]
     tasks_by_kind: dict[str, list[tuple[str, str]]] = {"OP": [], "ED": []}
     for anime in anime_rows:
-        for theme in anime.get("themes", []) or []:
+        # Current GraphQL schema calls these relationships animethemes and
+        # animethemeentries (the old rs endpoint used themes and entries).
+        for theme in anime.get("animethemes", []) or []:
             kind = theme.get("type")
             if kind not in {"OP", "ED"}:
                 continue
             best = None
-            for entry in theme.get("entries", []) or []:
+            for entry in theme.get("animethemeentries", []) or []:
                 for video in (entry.get("videos") or {}).get("nodes", []) or []:
                     link = video.get("link")
                     if not link:
                         continue
-                    filename = video.get("filename") or Path(urlparse(link).path).name
+                    basename = video.get("basename") or Path(urlparse(link).path).name
                     try:
                         resolution = int(video.get("resolution") or 0)
                     except (TypeError, ValueError):
                         resolution = 0
-                    is_nc = "NC" in filename.upper()
+                    is_nc = bool(video.get("nc")) or "NC" in basename.upper()
                     score = (10000 if is_nc else 0) + resolution
                     if best is None or score > best[0]:
-                        best = (score, str(link), str(filename))
+                        best = (score, str(link), str(basename))
             if best:
                 tasks_by_kind[kind].append((best[1], best[2]))
 
-    # The CLI grouped all OPs first, then all EDs, numbering across every
-    # matched anime rather than reusing each anime's theme sequence number.
+    # Preserve CLI ordering: all OPs first, followed by all EDs, numbered
+    # sequentially across every AnimeThemes result that matched the folder.
     tasks = [
-        (kind, sequence, link, filename)
+        (kind, sequence, link, basename)
         for kind in ("OP", "ED")
-        for sequence, (link, filename) in enumerate(tasks_by_kind[kind], start=1)
+        for sequence, (link, basename) in enumerate(tasks_by_kind[kind], start=1)
     ]
     if not tasks:
-        raise RuntimeError(f"No OP/ED video templates were found for '{series_name}'.")
+        raise RuntimeError(
+            f"AnimeThemes encontró el anime, pero no devolvió vídeos OP/ED utilizables para '{series_name}'."
+        )
 
     target_dir = _safe_series_template_dir(series_name)
     template_root = target_dir.parent
@@ -462,47 +466,87 @@ def _download_anime_rows_templates_impl(
     video_dir.mkdir(parents=True, exist_ok=True)
     songs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Keep hand-supplied WAVs and the source fingerprints of converted WAVs.
+    # Keep manual WAVs and the existing source fingerprints for derived WAVs.
     old_songs_dir = target_dir / "songs_files"
     if old_songs_dir.is_dir():
         shutil.copytree(old_songs_dir, songs_dir, dirs_exist_ok=True)
 
     successes: list[str] = []
     video_sources: dict[str, str] = {}
+    total_tasks = len(tasks)
     try:
         safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", series_name).strip(" .") or "anime"
-        for index, (kind, sequence, url, filename) in enumerate(tasks, 1):
-            suffix = Path(filename).suffix.lower() if filename else Path(urlparse(url).path).suffix.lower()
+        for index, (kind, sequence, url, basename) in enumerate(tasks, 1):
+            suffix = Path(basename).suffix.lower() if basename else Path(urlparse(url).path).suffix.lower()
             if not suffix or len(suffix) > 8 or not re.fullmatch(r"\.[a-z0-9]{1,7}", suffix):
                 suffix = ".webm"
             target = video_dir / f"{safe_name} - {kind}{sequence}{suffix}"
             previous_video = target_dir / "video_files" / target.name
+            label = f"{'Opening' if kind == 'OP' else 'Ending'} {kind}{sequence} · {index}/{total_tasks}"
+
             if (
                 old_sources.get(target.name) == url
                 and previous_video.is_file()
                 and previous_video.stat().st_size > 0
             ):
                 shutil.copy2(previous_video, target)
+                copied_size = target.stat().st_size
+                _report_progress(
+                    progress,
+                    "downloading_templates",
+                    5.0 + (index / total_tasks) * 65.0,
+                    f"{label} · caché local ({_format_bytes(copied_size)})",
+                )
             else:
-                _download(url, target)
+                _report_progress(
+                    progress,
+                    "downloading_templates",
+                    5.0 + ((index - 1) / total_tasks) * 65.0,
+                    f"Descargando {label}",
+                )
+
+                def byte_progress(downloaded: int, total: int | None) -> None:
+                    fraction = min(1.0, downloaded / total) if total and total > 0 else 0.0
+                    overall = 5.0 + ((index - 1 + fraction) / total_tasks) * 65.0
+                    size_label = _format_bytes(downloaded)
+                    if total and total > 0:
+                        size_label += f" / {_format_bytes(total)}"
+                    _report_progress(
+                        progress,
+                        "downloading_templates",
+                        overall,
+                        f"Descargando {label} · {size_label}",
+                    )
+
+                _download(url, target, on_progress=byte_progress)
+
             successes.append(str(target))
             video_sources[target.name] = url
-            if progress:
-                progress(index, len(tasks), target.name)
+            _report_progress(
+                progress,
+                "downloading_templates",
+                5.0 + (index / total_tasks) * 65.0,
+                f"{label} · descarga lista",
+            )
 
-        # Convert as part of the synchronization flow, before a series analysis
-        # can pass any WAV to the detector. Preserve the source videos if conversion
-        # fails so a later Analyze attempt can retry after fixing FFmpeg.
-        song_templates = []
+        # Downloaded OP/ED videos are converted before the series detector runs.
+        song_templates: list[Path] = []
         audio_preparation_error = None
         audio_preparation_warning = None
         try:
             cfg = load_config()
+
+            def conversion_progress(index: int, total: int, name: str) -> None:
+                percentage = 72.0 + ((index + 1) / max(total, 1)) * 18.0
+                _report_progress(progress, "converting_templates", percentage, f"Convirtiendo a WAV · {name}")
+
+            _report_progress(progress, "converting_templates", 72.0, "Preparando referencias WAV con FFmpeg")
             song_templates = prepare_song_templates(
                 staging,
                 Path(cfg["plugins_path"]).expanduser().resolve(),
-                on_template_progress=progress,
+                on_template_progress=conversion_progress,
             )
+            _report_progress(progress, "converting_templates", 90.0, "Conversión de WAV finalizada")
         except InterruptedError:
             raise
         except Exception as exc:
@@ -517,8 +561,8 @@ def _download_anime_rows_templates_impl(
             converted_count = 0
         if audio_preparation_error is None and converted_count < len(successes):
             audio_preparation_warning = (
-                f"Only {converted_count} of {len(successes)} downloaded video templates "
-                "were converted to WAV. Check FFmpeg and the application logs."
+                f"Solo se convirtieron {converted_count} de {len(successes)} vídeos OP/ED a WAV. "
+                "Comprueba FFmpeg y los logs de la aplicación."
             )
             logger.warning("%s (%s)", audio_preparation_warning, series_name)
 
@@ -565,6 +609,7 @@ def _download_anime_rows_templates_impl(
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+
 
 
 def _download_selected_templates_impl(
