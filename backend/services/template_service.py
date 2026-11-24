@@ -312,26 +312,36 @@ def _download_anime_rows_templates_impl(
                 progress(index, len(tasks), target.name)
 
         # Convert as part of the synchronization flow, before a series analysis
-        # can pass any WAV to the detector.
-        cfg = load_config()
-        song_templates = prepare_song_templates(
-            staging,
-            Path(cfg["plugins_path"]).expanduser().resolve(),
-            on_template_progress=progress,
-        )
+        # can pass any WAV to the detector. Preserve the source videos if conversion
+        # fails so a later Analyze attempt can retry after fixing FFmpeg.
+        song_templates = []
+        audio_preparation_error = None
+        audio_preparation_warning = None
+        try:
+            cfg = load_config()
+            song_templates = prepare_song_templates(
+                staging,
+                Path(cfg["plugins_path"]).expanduser().resolve(),
+                on_template_progress=progress,
+            )
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            audio_preparation_error = str(exc)
+            logger.exception("Could not prepare WAV templates for %s.", series_name)
+
         conversion_manifest = staging / "songs_files" / ".template_wav_manifest.json"
         try:
             converted_sources = json.loads(conversion_manifest.read_text(encoding="utf-8"))
             converted_count = len(converted_sources) if isinstance(converted_sources, dict) else 0
         except (OSError, ValueError):
             converted_count = 0
-        if converted_count < len(successes):
-            logger.warning(
-                "Only %s of %s AnimeThemes videos have a converted WAV for %s.",
-                converted_count,
-                len(successes),
-                series_name,
+        if audio_preparation_error is None and converted_count < len(successes):
+            audio_preparation_warning = (
+                f"Only {converted_count} of {len(successes)} downloaded video templates "
+                "were converted to WAV. Check FFmpeg and the application logs."
             )
+            logger.warning("%s (%s)", audio_preparation_warning, series_name)
 
         manifest = {
             "provider": "AnimeThemes",
@@ -369,8 +379,8 @@ def _download_anime_rows_templates_impl(
             "video_files_dir": str(target_dir / "video_files"),
             "songs_files_dir": str(target_dir / "songs_files"),
             "song_templates": len(song_templates),
-            "audio_preparation_error": None,
-            "audio_preparation_warning": None,
+            "audio_preparation_error": audio_preparation_error,
+            "audio_preparation_warning": audio_preparation_warning,
             "manifest": str(target_dir / "template_manifest.json"),
         }
     except Exception:
