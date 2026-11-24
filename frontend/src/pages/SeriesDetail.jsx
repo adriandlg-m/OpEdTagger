@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, Play, Search, ShieldCheck, XCircle, Eye, FileCheck2, Folder, FolderOpen, ImagePlus, Trash2, ZoomIn, ExternalLink } from 'lucide-react';
 import PageHeader from '../components/PageHeader.jsx';
 import Poster from '../components/Poster.jsx';
@@ -118,64 +118,17 @@ function ConfidenceDetail({ label, segment, original, anomaly }) {
 }
 
 function EpisodeRow({
-  episode, onApprove, onCorrect, onInject, onToast, showOutliers = true,
-  selected = false, onToggleSelection, processingFile = null,
+  episode, onOpen, selected = false, onToggleSelection, processingFile = null,
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [opStart, setOpStart] = useState(episode.op?.start ?? '');
-  const [opEnd, setOpEnd] = useState(episode.op?.end ?? '');
-  const [edStart, setEdStart] = useState(episode.ed?.start ?? '');
-  const [edEnd, setEdEnd] = useState(episode.ed?.end ?? '');
-  useEffect(() => {
-    setOpStart(episode.op?.start ?? ''); setOpEnd(episode.op?.end ?? '');
-    setEdStart(episode.ed?.start ?? ''); setEdEnd(episode.ed?.end ?? '');
-  }, [episode.op?.start, episode.op?.end, episode.ed?.start, episode.ed?.end]);
-
-  const isOutlier = showOutliers && episode.status === 'Outlier';
-  const badgeStatus = !showOutliers && episode.status === 'Outlier'
-    ? (episode.review_status === 'PENDING' ? 'Revisión necesaria' : episode.injection_status === 'SUCCEEDED' ? 'Listo' : 'Preparado')
-    : episode.status;
-  const needsReview = episode.review_status === 'PENDING';
-  const reviewRecommended = episode.review_status === 'REVIEW_RECOMMENDED';
-  const injected = episode.injection_status === 'SUCCEEDED';
-  const injectionInProgress = episode.injection_status === 'IN_PROGRESS';
-  const recoveryRequired = episode.injection_status === 'RECOVERY_REQUIRED';
-  const reviewLocked = injectionInProgress || recoveryRequired;
   const canInject = isInjectionEligible(episode);
-  const hasResult = ['COMPLETED', 'NO_MATCH'].includes(episode.analysis_status);
-  const legacyResult = episode.analysis_status === 'STALE' || episode.legacy_result;
+  const reviewLocked = ['IN_PROGRESS', 'RECOVERY_REQUIRED'].includes(episode.injection_status);
+  const injected = episode.injection_status === 'SUCCEEDED';
   const isProcessing = processingFile && episode.file_name === processingFile;
+  const badgeStatus = episode.review_status === 'REVIEW_RECOMMENDED' && canInject
+    ? 'Listo · revisar'
+    : injected ? 'Listo' : episode.status;
+  const bandClass = (band) => \`confidence-inline confidence-\${String(band || 'unassessed').toLowerCase()}\`;
 
-  const discardSegment = (kind) => {
-    const label = kind === 'OP' ? 'Opening' : 'Ending';
-    if (!episode[kind.toLowerCase()]) return;
-    const accepted = window.confirm(
-      `¿Descartar la detección de ${label} de ${episode.file_name}?\n\nEl timestamp original se conservará en el historial y no se incluirá en los capítulos.`
-    );
-    if (!accepted) return;
-    onCorrect(episode, kind === 'OP'
-      ? { op: null, ed: episode.ed }
-      : { op: episode.op, ed: null });
-  };
-
-  const saveCorrections = () => {
-    const build = (start, end, existing, label) => {
-      if (String(start).trim() === '' && String(end).trim() === '') return null;
-      const numericStart = Number(start); const numericEnd = Number(end);
-      if (!Number.isFinite(numericStart) || !Number.isFinite(numericEnd) || numericStart < 0 || numericStart >= numericEnd) {
-        throw new Error(`${label}: introduce valores numéricos donde el inicio sea menor que el final.`);
-      }
-      return { ...(existing || {}), name: existing?.name || label, start: numericStart, end: numericEnd };
-    };
-    try {
-      const op = build(opStart, opEnd, episode.op, 'OP');
-      const ed = build(edStart, edEnd, episode.ed, 'ED');
-      if (!op && !ed) throw new Error('Introduce al menos un segmento antes de guardar.');
-      onCorrect(episode, { op, ed });
-    } catch (error) { onToast(error.message, 'error'); }
-  };
-
-  const bandClass = (band) => `confidence-inline confidence-${String(band || 'unassessed').toLowerCase()}`;
   const renderCompactConfidence = (segment) => {
     if (!segment) {
       return <small className="confidence-inline confidence-unassessed">Sin coincidencia</small>;
@@ -183,31 +136,31 @@ function EpisodeRow({
     return (
       <div className="episode-confidence-inline" aria-label="Indicadores de confianza">
         <span className="confidence-inline-label">Coincidencia</span>
-        <strong className={bandClass(segment.match_confidence_band)}>{segment.match_confidence_score ?? '—'}/100</strong>
+        <strong className={bandClass(segment.match_confidence_band)}>{segment.match_confidence_score ?? '—'}</strong>
         <span className="confidence-inline-divider">·</span>
         <span className="confidence-inline-label">Inicio</span>
-        <strong className={bandClass(segment.temporal_precision_band)}>{segment.temporal_precision_score ?? '—'}/100</strong>
+        <strong className={bandClass(segment.temporal_precision_band)}>{segment.temporal_precision_score ?? '—'}</strong>
       </div>
     );
   };
 
   return (
-    <article className={`episode-row ${isOutlier ? 'episode-outlier' : ''} ${isProcessing ? 'episode-row-processing' : ''}`}>
-      <div className="episode-main-row">
-        <div className="episode-id-block">
-          <div className="episode-id-line">
-            <input
-              type="checkbox"
-              className="episode-select-checkbox"
-              checked={selected}
-              disabled={!canInject || reviewLocked}
-              onChange={() => onToggleSelection?.(episode)}
-              aria-label={`Seleccionar ${episode.file_name} para inyección masiva`}
-              title={canInject ? 'Seleccionar para inyección masiva' : 'Este episodio necesita revisión o no está disponible para inyección'}
-            />
+    <article className={\`episode-browser-row \${isProcessing ? 'episode-row-processing' : ''}\`}>
+      <div className="episode-browser-main">
+        <div className="episode-browser-id">
+          <input
+            type="checkbox"
+            className="episode-select-checkbox"
+            checked={selected}
+            disabled={!canInject || reviewLocked}
+            onChange={() => onToggleSelection?.(episode)}
+            aria-label={\`Seleccionar \${episode.file_name} para inyección masiva\`}
+            title={canInject ? 'Seleccionar para inyección masiva' : 'Este episodio no está disponible para inyección'}
+          />
+          <button type="button" className="episode-browser-open" onClick={() => onOpen?.(episode)}>
             <strong>{episode.displayId || episode.file_name}</strong>
-          </div>
-          <span className="stage-label">{episode.file_name}</span>
+            <span className="stage-label">{episode.file_name}</span>
+          </button>
         </div>
         <div className="episode-segment">
           <span className="segment-label">Opening</span>
@@ -219,62 +172,181 @@ function EpisodeRow({
           <strong>{episode.ending}</strong>
           {renderCompactConfidence(episode.ed)}
         </div>
-        <div className="episode-status"><StatusBadge status={badgeStatus} /></div>
-        <div className="episode-row-actions"><button className="icon-button expand-button" onClick={() => setExpanded((value) => !value)} aria-label="Mostrar detalles"><ChevronDown size={17} /></button></div>
+        <div className="episode-browser-status"><StatusBadge status={badgeStatus} /></div>
+        <button type="button" className="icon-button episode-open-button" onClick={() => onOpen?.(episode)}
+          aria-label={\`Abrir \${episode.displayId || episode.file_name}\`} title="Abrir episodio">
+          <ChevronRight size={17} />
+        </button>
       </div>
-      {expanded && (
-        <div className="outlier-detail">
-          <div className="outlier-detail-icon"><CircleAlert size={17} /></div>
-          <div className="outlier-detail-copy">
-            <strong>Estado y fiabilidad de las detecciones</strong>
-            <p>Análisis: {episode.analysis_status} · Revisión: {episode.review_status} · Inyección: {episode.injection_status}</p>
-            <div className="confidence-evidence-grid">
-              <ConfidenceDetail label="Opening" segment={episode.op} original={episode.original_op} anomaly={showOutliers && episode.is_anomaly_op} />
-              <ConfidenceDetail label="Ending" segment={episode.ed} original={episode.original_ed} anomaly={showOutliers && episode.is_anomaly_ed} />
-            </div>
-            <div className="outlier-meta">
-              {episode.error && <span>Error: <b>{episode.error}</b></span>}
-              {legacyResult && <span>Estos timestamps provienen del JSON antiguo. Se conservan como referencia, pero debes repetir el análisis para evaluarlos antes de inyectarlos.</span>}
-              {episode.review_history?.length > 0 && (
-                <span>
-                  Historial: <b>{episode.review_history.length} cambios registrados</b>
-                  {episode.review_history.slice(0, 3).map((entry, index) => (
-                    <small key={index} className="review-history-entry">
-                      {entry.segment_type} · {entry.action === 'CORRECTED' ? 'corregido' : entry.action === 'REMOVED' ? 'retirado' : 'aprobado'} · {new Date(entry.created_at).toLocaleString()}
-                    </small>
-                  ))}
-                </span>
-              )}
-            </div>
-            {hasResult && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, marginTop: 14, maxWidth: 620 }}>
-              {[{ label: 'Opening', start: opStart, end: opEnd, setStart: setOpStart, setEnd: setOpEnd },
-                { label: 'Ending', start: edStart, end: edEnd, setStart: setEdStart, setEnd: setEdEnd }].map((item) => (
-                <div key={item.label} style={{ display: 'grid', gap: 6 }}>
-                  <strong style={{ fontSize: 12, color: 'var(--text-secondary, #9ca3af)' }}>{item.label} · segundos</strong>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                    <input aria-label={`${item.label} inicio en segundos`} type="number" min="0" step="0.01" value={item.start} disabled={reviewLocked} onChange={(event) => item.setStart(event.target.value)} placeholder="Inicio" style={{ minWidth: 0, width: '100%', padding: '8px 9px', borderRadius: 8, border: '1px solid var(--border-color, #333)', background: 'var(--surface-2, #151a27)', color: 'var(--text-primary, #fff)' }} />
-                    <input aria-label={`${item.label} final en segundos`} type="number" min="0" step="0.01" value={item.end} disabled={reviewLocked} onChange={(event) => item.setEnd(event.target.value)} placeholder="Final" style={{ minWidth: 0, width: '100%', padding: '8px 9px', borderRadius: 8, border: '1px solid var(--border-color, #333)', background: 'var(--surface-2, #151a27)', color: 'var(--text-primary, #fff)' }} />
-                  </div>
-                </div>
-              ))}
-            </div>}
-            <div className="inline-actions" style={{ marginTop: 12, flexWrap: 'wrap' }}>
-              {hasResult && <button className="button button-secondary button-small" onClick={saveCorrections} disabled={reviewLocked}>Guardar correcciones</button>}
-              {episode.op && <button className="button button-ghost button-small" onClick={() => discardSegment('OP')} disabled={reviewLocked}>Descartar Opening</button>}
-              {episode.ed && <button className="button button-ghost button-small" onClick={() => discardSegment('ED')} disabled={reviewLocked}>Descartar Ending</button>}
-              {legacyResult && <span className="muted-score">Reanaliza el episodio para habilitar la revisión segura.</span>}
-              {(needsReview || reviewRecommended) && <button className="button button-primary button-small" onClick={() => onApprove(episode)} disabled={reviewLocked}><CheckCircle2 size={13} /> Confirmar manualmente</button>}
-              {canInject && !injected && !reviewLocked && <button className="button button-secondary button-small" onClick={() => onInject(episode)}><ShieldCheck size={13} /> Inyectar este episodio</button>}
-              {injectionInProgress && <span className="muted-score">Inyección en curso. No edites ni vuelvas a ejecutar esta operación.</span>}
-              {injected && <span className="status-badge status-success"><FileCheck2 size={13} /> Capítulos verificados</span>}
-              {recoveryRequired && <span className="muted-score">La aplicación se interrumpió durante una inyección. Inspecciona el MKV y su respaldo antes de continuar.</span>}
-              {!hasResult && <span className="muted-score">No hay resultados que revisar.</span>}
-            </div>
-          </div>
-          <span className="outlier-detail-label">Datos reales</span>
-        </div>
-      )}
     </article>
+  );
+}
+
+function EpisodeWorkspace({
+  episode, siblings, onBack, onNavigate, onApprove, onCorrect, onInject, onToast, showOutliers = true,
+}) {
+  const [opStart, setOpStart] = useState(episode.op?.start ?? '');
+  const [opEnd, setOpEnd] = useState(episode.op?.end ?? '');
+  const [edStart, setEdStart] = useState(episode.ed?.start ?? '');
+  const [edEnd, setEdEnd] = useState(episode.ed?.end ?? '');
+
+  useEffect(() => {
+    setOpStart(episode.op?.start ?? '');
+    setOpEnd(episode.op?.end ?? '');
+    setEdStart(episode.ed?.start ?? '');
+    setEdEnd(episode.ed?.end ?? '');
+  }, [episode.id, episode.op?.start, episode.op?.end, episode.ed?.start, episode.ed?.end]);
+
+  const index = siblings.findIndex((item) => item.id === episode.id);
+  const previous = index > 0 ? siblings[index - 1] : null;
+  const next = index >= 0 && index < siblings.length - 1 ? siblings[index + 1] : null;
+  const needsReview = episode.review_status === 'PENDING';
+  const reviewRecommended = episode.review_status === 'REVIEW_RECOMMENDED';
+  const injected = episode.injection_status === 'SUCCEEDED';
+  const injectionInProgress = episode.injection_status === 'IN_PROGRESS';
+  const recoveryRequired = episode.injection_status === 'RECOVERY_REQUIRED';
+  const reviewLocked = injectionInProgress || recoveryRequired;
+  const canInject = isInjectionEligible(episode);
+  const hasResult = ['COMPLETED', 'NO_MATCH'].includes(episode.analysis_status);
+  const legacyResult = episode.analysis_status === 'STALE' || episode.legacy_result;
+  const badgeStatus = reviewRecommended && canInject ? 'Listo · revisar'
+    : injected ? 'Listo' : episode.status;
+
+  const discardSegment = (kind) => {
+    const label = kind === 'OP' ? 'Opening' : 'Ending';
+    if (!episode[kind.toLowerCase()]) return;
+    const accepted = window.confirm(
+      \`¿Descartar la detección de \${label} de \${episode.file_name}?\n\nEl timestamp original se conservará en el historial y no se incluirá en los capítulos.\`
+    );
+    if (!accepted) return;
+    onCorrect(episode, kind === 'OP'
+      ? { op: null, ed: episode.ed }
+      : { op: episode.op, ed: null });
+  };
+
+  const saveCorrections = () => {
+    const build = (start, end, existing, label) => {
+      if (String(start).trim() === '' && String(end).trim() === '') return null;
+      const numericStart = Number(start);
+      const numericEnd = Number(end);
+      if (!Number.isFinite(numericStart) || !Number.isFinite(numericEnd)
+        || numericStart < 0 || numericStart >= numericEnd) {
+        throw new Error(\`\${label}: introduce valores numéricos donde el inicio sea menor que el final.\`);
+      }
+      return { ...(existing || {}), name: existing?.name || label, start: numericStart, end: numericEnd };
+    };
+    try {
+      const op = build(opStart, opEnd, episode.op, 'OP');
+      const ed = build(edStart, edEnd, episode.ed, 'ED');
+      if (!op && !ed) throw new Error('Introduce al menos un segmento antes de guardar.');
+      onCorrect(episode, { op, ed });
+    } catch (error) {
+      onToast(error.message, 'error');
+    }
+  };
+
+  const renderEditor = (label, start, end, setStart, setEnd) => (
+    <div className="episode-time-editor">
+      <strong>{label} · segundos</strong>
+      <div className="episode-time-editor-fields">
+        <label>
+          <span>Inicio</span>
+          <input aria-label={\`\${label} inicio en segundos\`} type="number" min="0" step="0.01"
+            value={start} disabled={reviewLocked} onChange={(event) => setStart(event.target.value)} placeholder="Inicio" />
+        </label>
+        <label>
+          <span>Final</span>
+          <input aria-label={\`\${label} final en segundos\`} type="number" min="0" step="0.01"
+            value={end} disabled={reviewLocked} onChange={(event) => setEnd(event.target.value)} placeholder="Final" />
+        </label>
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="episode-workspace workspace-view-transition">
+      <header className="episode-workspace-header">
+        <div className="episode-workspace-title">
+          <button type="button" className="workspace-back-link" onClick={onBack}>
+            <ArrowLeft size={15} /> Volver a la carpeta
+          </button>
+          <span className="panel-eyebrow">REVISIÓN DE EPISODIO</span>
+          <h2>{episode.displayId || episode.file_name}</h2>
+          <p>{episode.file_name}</p>
+        </div>
+        <div className="episode-workspace-navigation">
+          <StatusBadge status={badgeStatus} />
+          <div className="episode-previous-next">
+            <button className="button button-secondary button-small" type="button" onClick={() => onNavigate(previous)}
+              disabled={!previous}>Anterior</button>
+            <button className="button button-secondary button-small" type="button" onClick={() => onNavigate(next)}
+              disabled={!next}>Siguiente</button>
+          </div>
+        </div>
+      </header>
+
+      <div className="episode-workspace-main">
+        <div className="episode-workspace-detections">
+          <section className="episode-workspace-segment">
+            <div className="episode-workspace-segment-heading">
+              <div><span className="panel-eyebrow">DETECCIÓN 01</span><h3>Opening</h3></div>
+              <strong>{episode.op ? \`\${formatTimestamp(episode.op.start)}–\${formatTimestamp(episode.op.end)}\` : 'Sin coincidencia'}</strong>
+            </div>
+            <ConfidenceDetail label="Opening" segment={episode.op} original={episode.original_op}
+              anomaly={showOutliers && episode.is_anomaly_op} />
+            {hasResult && renderEditor('Opening', opStart, opEnd, setOpStart, setOpEnd)}
+          </section>
+
+          <section className="episode-workspace-segment">
+            <div className="episode-workspace-segment-heading">
+              <div><span className="panel-eyebrow">DETECCIÓN 02</span><h3>Ending</h3></div>
+              <strong>{episode.ed ? \`\${formatTimestamp(episode.ed.start)}–\${formatTimestamp(episode.ed.end)}\` : 'Sin coincidencia'}</strong>
+            </div>
+            <ConfidenceDetail label="Ending" segment={episode.ed} original={episode.original_ed}
+              anomaly={showOutliers && episode.is_anomaly_ed} />
+            {hasResult && renderEditor('Ending', edStart, edEnd, setEdStart, setEdEnd)}
+          </section>
+        </div>
+
+        <aside className="episode-workspace-sidebar">
+          <section className="episode-workspace-info">
+            <span className="panel-eyebrow">ESTADO DEL PROCESAMIENTO</span>
+            <dl>
+              <div><dt>Análisis</dt><dd>{episode.analysis_status}</dd></div>
+              <div><dt>Revisión</dt><dd>{episode.review_status}</dd></div>
+              <div><dt>Inyección</dt><dd>{episode.injection_status}</dd></div>
+            </dl>
+            {episode.error && <p className="episode-workspace-error">{episode.error}</p>}
+            {legacyResult && <p className="episode-workspace-note">Estos timestamps provienen del JSON antiguo. Se conservan como referencia, pero debes repetir el análisis para evaluarlos antes de inyectarlos.</p>}
+            {episode.review_history?.length > 0 && (
+              <div className="episode-workspace-history">
+                <strong>Historial · {episode.review_history.length} cambios</strong>
+                {episode.review_history.slice(0, 6).map((entry, itemIndex) => (
+                  <small key={itemIndex}>
+                    {entry.segment_type} · {entry.action === 'CORRECTED' ? 'corregido' : entry.action === 'REMOVED' ? 'retirado' : 'aprobado'}
+                    {' · '}{new Date(entry.created_at).toLocaleString()}
+                  </small>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="episode-workspace-actions">
+            <span className="panel-eyebrow">ACCIONES</span>
+            {hasResult && <button className="button button-secondary" onClick={saveCorrections} disabled={reviewLocked}>Guardar correcciones</button>}
+            {episode.op && <button className="button button-ghost" onClick={() => discardSegment('OP')} disabled={reviewLocked}>Descartar Opening</button>}
+            {episode.ed && <button className="button button-ghost" onClick={() => discardSegment('ED')} disabled={reviewLocked}>Descartar Ending</button>}
+            {legacyResult && <span className="muted-score">Reanaliza el episodio para habilitar la revisión segura.</span>}
+            {(needsReview || reviewRecommended) && <button className="button button-primary" onClick={() => onApprove(episode)} disabled={reviewLocked}><CheckCircle2 size={14} /> Confirmar manualmente</button>}
+            {canInject && !injected && !reviewLocked && <button className="button button-primary" onClick={() => onInject(episode)}><ShieldCheck size={14} /> Inyectar este episodio</button>}
+            {injectionInProgress && <span className="episode-workspace-note">Inyección en curso. No edites ni vuelvas a ejecutar esta operación.</span>}
+            {injected && <span className="status-badge status-success"><FileCheck2 size={13} /> Capítulos verificados</span>}
+            {recoveryRequired && <span className="episode-workspace-note">La aplicación se interrumpió durante una inyección. Inspecciona el MKV y su respaldo antes de continuar.</span>}
+            {!hasResult && <span className="muted-score">No hay resultados que revisar.</span>}
+          </section>
+        </aside>
+      </div>
+    </section>
   );
 }
 
@@ -316,58 +388,56 @@ function countFolderEpisodes(folder) {
   return count;
 }
 
-function FolderNode({ folder, depth, onApprove, onCorrect, onInject, onToast, showOutliers, expandAll = false, selectedIds, onToggleSelection, processingFile }) {
-  // Every real folder starts collapsed. Active search/status filters expand
-  // the matching tree temporarily so filtered episodes remain discoverable.
-  const [expanded, setExpanded] = useState(false);
-  useEffect(() => {
-    setExpanded(Boolean(expandAll));
-  }, [expandAll]);
-  const childFolders = Array.from(folder.folders.values()).sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-  );
-  const total = countFolderEpisodes(folder);
-  const isExpanded = expanded || expandAll;
+function findFolderByPath(root, path) {
+  if (!path) return root;
+  let current = root;
+  for (const segment of path.split('/').filter(Boolean)) {
+    current = current.folders.get(segment);
+    if (!current) return null;
+  }
+  return current;
+}
 
+function collectFolderEpisodes(folder) {
+  if (!folder) return [];
+  const result = [...folder.episodes];
+  for (const child of folder.folders.values()) result.push(...collectFolderEpisodes(child));
+  return result;
+}
+
+function folderEpisodeSummary(folder, matchingIds) {
+  const all = collectFolderEpisodes(folder);
+  const visible = matchingIds ? all.filter((episode) => matchingIds.has(episode.id)) : all;
+  return {
+    count: visible.length,
+    review: visible.filter((episode) => ['PENDING', 'REVIEW_RECOMMENDED'].includes(episode.review_status)).length,
+    required: visible.filter((episode) => episode.review_status === 'PENDING').length,
+    ready: visible.filter(isInjectionEligible).length,
+  };
+}
+
+function FolderBrowserRow({ folder, matchingIds, onOpen }) {
+  const summary = folderEpisodeSummary(folder, matchingIds);
+  if (!summary.count) return null;
   return (
-    <section className={`folder-node ${depth > 0 ? 'folder-node-nested' : ''}`} data-folder-path={folder.path} style={{ '--folder-depth': depth }}>
-      <button
-        type="button"
-        className="folder-node-heading"
-        onClick={() => { if (!expandAll) setExpanded((value) => !value); }}
-        aria-expanded={isExpanded}
-        title={folder.path}
-      >
-        <span className="folder-node-leading">
-          {isExpanded ? <FolderOpen size={17} /> : <Folder size={17} />}
-        </span>
-        <span className="folder-node-name">{folder.name}</span>
-        <span className="folder-node-count">{total} {total === 1 ? 'archivo' : 'archivos'}</span>
-        <span className="folder-node-chevron">{isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
-      </button>
-
-      {isExpanded && (
-        <div className="folder-node-content">
-          {folder.episodes.length > 0 && (
-            <div className="episode-list folder-episode-list">
-              {folder.episodes.map((episode) => (
-                <EpisodeRow key={episode.file_path} episode={episode} onApprove={onApprove}
-                  onCorrect={onCorrect} onInject={onInject} onToast={onToast} showOutliers={showOutliers}
-                  selected={selectedIds?.has(episode.id)} onToggleSelection={onToggleSelection} processingFile={processingFile} />
-              ))}
-            </div>
-          )}
-          {childFolders.map((child) => (
-            <FolderNode key={child.path} folder={child} depth={depth + 1}
-              onApprove={onApprove} onCorrect={onCorrect} onInject={onInject}
-              onToast={onToast} showOutliers={showOutliers} expandAll={expandAll}
-              selectedIds={selectedIds} onToggleSelection={onToggleSelection} processingFile={processingFile} />
-          ))}
-        </div>
-      )}
-    </section>
+    <button type="button" className="folder-browser-row" onClick={() => onOpen(folder)}>
+      <span className="folder-browser-icon"><Folder size={19} /></span>
+      <span className="folder-browser-copy">
+        <strong>{folder.name}</strong>
+        <small>{summary.count} {summary.count === 1 ? 'episodio' : 'episodios'}
+          {folder.folders.size ? \` · \${folder.folders.size} subcarpetas\` : ''}
+        </small>
+      </span>
+      <span className="folder-browser-status">
+        <strong>{summary.ready} listos</strong>
+        {summary.review > 0 && <small>{summary.required > 0 ? \`\${summary.required} requieren revisión\` : \`\${summary.review} con avisos\`}</small>}
+      </span>
+      <ChevronRight size={17} />
+    </button>
   );
 }
+
+
 
 export default function SeriesDetail({ series, episodes, onBack, onStartProcessing, onCancelProcessing, activeJob, onRefresh, onPosterUpdated, onToast, showOutliers = true }) {
   const [search, setSearch] = useState('');
@@ -383,6 +453,11 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [batchPreviewOpen, setBatchPreviewOpen] = useState(false);
   const [replaceExistingChapters, setReplaceExistingChapters] = useState(false);
+  const [activeFolderPath, setActiveFolderPath] = useState(null);
+  const [selectedEpisodeId, setSelectedEpisodeId] = useState(null);
+  const workspaceScrollRef = useRef(null);
+  const folderScrollPositionsRef = useRef(new Map());
+  const restoreScrollTopRef = useRef(0);
   useEffect(() => setPosterUrl(series.poster_url || ''), [series.poster_url]);
 
   const refreshSeriesMetadata = useCallback(async () => {
@@ -440,11 +515,94 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
           : ep.status === statusFilter);
     return matchesText && matchesStatus;
   }), [episodes, search, statusFilter]);
-  const folderTree = useMemo(() => buildFolderTree(filtered), [filtered]);
-  const expandAllFolders = search.trim().length > 0 || statusFilter !== 'Todos los estados';
-  const orderedFolders = useMemo(() => Array.from(folderTree.folders.values()).sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-  ), [folderTree]);
+  const folderTree = useMemo(() => buildFolderTree(episodes), [episodes]);
+  const matchingEpisodeIds = useMemo(() => new Set(filtered.map((episode) => episode.id)), [filtered]);
+  const currentFolder = activeFolderPath === null ? folderTree : findFolderByPath(folderTree, activeFolderPath);
+  const selectedEpisode = selectedEpisodeId === null
+    ? null
+    : episodes.find((episode) => episode.id === selectedEpisodeId) || null;
+  const scopeEpisodes = useMemo(() => {
+    if (activeFolderPath === null) return filtered;
+    return collectFolderEpisodes(currentFolder).filter((episode) => matchingEpisodeIds.has(episode.id));
+  }, [activeFolderPath, currentFolder, filtered, matchingEpisodeIds]);
+  const directEpisodes = useMemo(() => (
+    (currentFolder?.episodes || []).filter((episode) => matchingEpisodeIds.has(episode.id))
+  ), [currentFolder, matchingEpisodeIds]);
+  const childFolders = useMemo(() => Array.from(currentFolder?.folders?.values() || [])
+    .filter((folder) => folderEpisodeSummary(folder, matchingEpisodeIds).count > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })),
+  [currentFolder, matchingEpisodeIds]);
+  const folderBreadcrumbs = activeFolderPath ? activeFolderPath.split('/').filter(Boolean).map((name, index, names) => ({
+    name,
+    path: names.slice(0, index + 1).join('/'),
+  })) : [];
+  const parentFolderPath = activeFolderPath
+    ? activeFolderPath.split('/').slice(0, -1).join('/') || null
+    : null;
+  const eligibleEpisodes = episodes.filter(isInjectionEligible);
+  const scopeEligibleEpisodes = scopeEpisodes.filter(isInjectionEligible);
+  const selectedEligibleEpisodes = eligibleEpisodes.filter((episode) => selectedEpisodeIds.has(episode.id));
+  useEffect(() => {
+    if (activeFolderPath !== null && !findFolderByPath(folderTree, activeFolderPath)) {
+      setActiveFolderPath(null);
+      setSelectedEpisodeId(null);
+    }
+  }, [activeFolderPath, folderTree]);
+  useLayoutEffect(() => {
+    if (!selectedEpisodeId && workspaceScrollRef.current) {
+      workspaceScrollRef.current.scrollTop = restoreScrollTopRef.current || 0;
+      restoreScrollTopRef.current = 0;
+    }
+  }, [activeFolderPath, selectedEpisodeId]);
+  const rememberWorkspaceScroll = () => {
+    if (workspaceScrollRef.current) {
+      folderScrollPositionsRef.current.set(activeFolderPath || '__root__', workspaceScrollRef.current.scrollTop);
+    }
+  };
+  const navigateToFolderPath = (path) => {
+    rememberWorkspaceScroll();
+    restoreScrollTopRef.current = folderScrollPositionsRef.current.get(path || '__root__') || 0;
+    setSelectedEpisodeId(null);
+    setActiveFolderPath(path);
+  };
+  const openFolder = (folder) => navigateToFolderPath(folder.path);
+  const navigateBackFromEpisode = () => {
+    setSelectedEpisodeId(null);
+    restoreScrollTopRef.current = folderScrollPositionsRef.current.get(activeFolderPath || '__root__') || 0;
+  };
+  const openEpisode = (episode) => {
+    rememberWorkspaceScroll();
+    setSelectedEpisodeId(episode.id);
+  };
+  const navigateBackFromFolder = () => navigateToFolderPath(parentFolderPath);
+  const visibleSiblingEpisodes = directEpisodes.length
+    ? directEpisodes
+    : selectedEpisode ? [selectedEpisode] : [];
+  const processingFile = ['analyzing_episodes', 'injecting_chapters'].includes(activeJob?.stage)
+    ? activeJob.current_item
+    : null;
+  const confidenceSummary = useMemo(() => {
+    const createCounts = () => ({ HIGH: 0, MEDIUM: 0, LOW: 0, UNASSESSED: 0 });
+    const summary = { detections: 0, match: createCounts(), temporal: createCounts() };
+    for (const episode of scopeEpisodes) {
+      for (const segment of [episode.op, episode.ed]) {
+        if (!segment) continue;
+        summary.detections += 1;
+        const matchBand = summary.match[segment.match_confidence_band] === undefined
+          ? 'UNASSESSED' : segment.match_confidence_band;
+        const temporalBand = summary.temporal[segment.temporal_precision_band] === undefined
+          ? 'UNASSESSED' : segment.temporal_precision_band;
+        summary.match[matchBand] += 1;
+        summary.temporal[temporalBand] += 1;
+      }
+    }
+    return summary;
+  }, [scopeEpisodes]);
+  const reviewQueueCount = scopeEpisodes.filter((episode) =>
+    ['PENDING', 'REVIEW_RECOMMENDED'].includes(episode.review_status)
+  ).length;
+
+
   const active = activeJob
     && ['series', 'injection'].includes(activeJob.kind)
     && activeJob.series_name === series.name
@@ -574,7 +732,10 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   };
 
   const selectAllEligible = () => {
-    setSelectedEpisodeIds(new Set(eligibleEpisodes.map((episode) => episode.id)));
+    setSelectedEpisodeIds((current) => new Set([
+      ...current,
+      ...scopeEligibleEpisodes.map((episode) => episode.id),
+    ]));
   };
 
   const startBatchInjection = () => {
@@ -605,8 +766,25 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   return (
     <div className={`page-content detail-page ${active ? 'is-processing' : ''}`}>
       <div className="detail-fixed-content">
-        <div className="breadcrumb"><button onClick={onBack}><ArrowLeft size={15} /> Dashboard</button><ChevronRight size={14} /><span>{series.title}</span></div>
-        <PageHeader title="Detalle de serie" description="Al analizar, OpEdTagger sincroniza automáticamente los templates OP/ED, prepara y valida sus WAV y después procesa los episodios. Los MKV no se modifican."
+        <div className="breadcrumb">
+          <button onClick={onBack}><ArrowLeft size={15} /> Dashboard</button>
+          <ChevronRight size={14} />
+          <button type="button" onClick={() => navigateToFolderPath(null)}>{series.title}</button>
+          {folderBreadcrumbs.map((crumb) => (
+            <span className="breadcrumb-segment" key={crumb.path}>
+              <ChevronRight size={14} />
+              <button type="button" onClick={() => navigateToFolderPath(crumb.path)}>{crumb.name}</button>
+            </span>
+          ))}
+          {selectedEpisode && <><ChevronRight size={14} /><span>{selectedEpisode.displayId || selectedEpisode.file_name}</span></>}
+        </div>
+        <PageHeader title={selectedEpisode ? (selectedEpisode.displayId || selectedEpisode.file_name)
+          : activeFolderPath ? currentFolder?.name || 'Carpeta' : 'Detalle de serie'}
+          description={selectedEpisode
+            ? 'Revisa las detecciones, consulta la confianza y corrige los timestamps cuando sea necesario.'
+            : activeFolderPath
+              ? 'Contenido de esta carpeta. Selecciona un episodio para abrir su espacio de revisión.'
+              : 'Explora la biblioteca por carpetas y abre cada episodio para consultar o corregir sus detecciones.'}
           eyebrow="BIBLIOTECA / SERIE" actions={active ? <button className="button button-danger-ghost" onClick={() => onCancelProcessing(activeJob?.id)}><XCircle size={15} /> {isInjectionJob ? 'Cancelar inyección' : 'Cancelar análisis'}</button> : <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="button button-secondary" onClick={openPosterSearch}><ImagePlus size={15} /> {posterUrl ? 'Cambiar carátula' : 'Buscar carátula'}</button><button className="button button-primary" onClick={onStartProcessing}><Play size={15} fill="currentColor" /> Analizar serie</button></div>} />
 
         {posterModalOpen && <PosterSearchModal
@@ -672,6 +850,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
           </div>
         )}
 
+        {!activeFolderPath && !selectedEpisodeId && (
         <section className={`panel series-hero-panel ${active ? 'series-hero-processing' : ''} ${seriesMetadata?.banner_url && !bannerFailed ? 'series-hero-has-banner' : ''}`}>
           {seriesMetadata?.banner_url && !bannerFailed && (
             <img
@@ -757,6 +936,16 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
             <div><strong>{series.episodes}</strong><span>Archivos locales</span></div>
           </div>
         </section>
+        )}
+
+        {(activeFolderPath !== null || selectedEpisodeId !== null) && (
+          <section className="series-context-bar">
+            <div className="series-context-icon"><FolderOpen size={17} /></div>
+            <div><strong>{series.title}</strong><span>{series.episodes} archivos locales · Biblioteca de la serie</span></div>
+            <button type="button" className="button button-secondary button-small"
+              onClick={() => navigateToFolderPath(null)}>Ver carpetas</button>
+          </section>
+        )}
 
         {posterLightboxOpen && (
           <SeriesArtworkLightbox
@@ -831,50 +1020,95 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
 
       </div>
 
-      <section className="panel episodes-panel">
-        <div className="panel-toolbar episode-toolbar">
-          <div className="panel-title-wrap"><div className="panel-title-icon"><FolderOpen size={17} /></div><div><h2>Contenido de la serie</h2><p>Organizado según la estructura de carpetas de tu biblioteca</p></div></div>
-          <div className="toolbar-controls"><label className="search-control"><Search size={17} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar episodio..." /></label>
-            <label className="select-control"><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>Todos los estados</option><option>Preparado</option><option>Revisión necesaria</option><option>Revisión recomendada</option><option>Analizado</option><option>Revisión</option><option>Outlier</option><option>Sin coincidencias</option><option>Desactualizado</option><option>Pendiente</option><option>Error</option><option>Listo</option></select><ChevronDown size={15} /></label>
-          </div>
-        </div>
-        <div className="confidence-summary-bar">
-          <div className="confidence-summary-metrics">
-            <span className="confidence-summary-detections">{confidenceSummary.detections} detecciones</span>
-            <ConfidenceSummaryGroup label="Coincidencia" counts={confidenceSummary.match} />
-            <ConfidenceSummaryGroup label="Inicio" counts={confidenceSummary.temporal} />
-            <span className="confidence-review-count">{reviewQueueCount} episodios con avisos</span>
-          </div>
-          <div className="confidence-batch-actions">
-            <button className="button button-ghost button-small" onClick={() => setStatusFilter('Necesita revisión')} disabled={!reviewQueueCount}>Ver excepciones</button>
-            <button className="button button-secondary button-small" onClick={selectAllEligible} disabled={!eligibleEpisodes.length || active}>Seleccionar elegibles ({eligibleEpisodes.length})</button>
-            <button className="button button-primary button-small" onClick={startBatchInjection} disabled={!selectedEligibleEpisodes.length || batchSubmitting || active}>
-              {batchSubmitting ? 'Preparando…' : `Inyectar seleccionados (${selectedEligibleEpisodes.length})`}
-            </button>
-            {selectedEpisodeIds.size > 0 && <button className="button button-ghost button-small" onClick={() => setSelectedEpisodeIds(new Set())}>Limpiar</button>}
-          </div>
-        </div>
-        <div className="episode-column-head"><span>EPISODIO</span><span>OPENING</span><span>ENDING</span><span>ESTADO</span><span /></div>
-        <div className="folder-tree-viewport" aria-label="Carpetas y episodios de la serie" tabIndex={0}>
-          <div className="folder-tree">
-            {folderTree.episodes.length > 0 && (
-              <section className="folder-root-group">
-                <div className="folder-root-heading"><FolderOpen size={16} /><strong>Raíz de la serie</strong><span>{folderTree.episodes.length} {folderTree.episodes.length === 1 ? 'archivo' : 'archivos'}</span></div>
-                <div className="episode-list folder-episode-list">
-                  {folderTree.episodes.map((episode) => <EpisodeRow key={episode.file_path} episode={episode}
-                    onApprove={approve} onCorrect={correct} onInject={inject} onToast={onToast} showOutliers={showOutliers}
-                    selected={selectedEpisodeIds.has(episode.id)} onToggleSelection={toggleEpisodeSelection} processingFile={processingFile} />)}
+      <section className="panel episodes-panel folder-browser-panel">
+        {selectedEpisode ? (
+          <EpisodeWorkspace
+            key={selectedEpisode.id}
+            episode={selectedEpisode}
+            siblings={visibleSiblingEpisodes}
+            onBack={navigateBackFromEpisode}
+            onNavigate={(episode) => episode && setSelectedEpisodeId(episode.id)}
+            onApprove={approve}
+            onCorrect={correct}
+            onInject={inject}
+            onToast={onToast}
+            showOutliers={showOutliers}
+          />
+        ) : (
+          <>
+            <div className="panel-toolbar episode-toolbar folder-browser-toolbar">
+              <div className="panel-title-wrap">
+                <div className="panel-title-icon"><FolderOpen size={17} /></div>
+                <div>
+                  <h2>{activeFolderPath ? currentFolder?.name : 'Carpetas de la serie'}</h2>
+                  <p>{activeFolderPath
+                    ? \`\${childFolders.length} subcarpetas · \${scopeEpisodes.length} episodios en esta ubicación\`
+                    : 'Selecciona una carpeta para explorar sus episodios'}
+                  </p>
                 </div>
-              </section>
-            )}
-            {orderedFolders.map((folder) => <FolderNode key={folder.path} folder={folder} depth={0}
-              onApprove={approve} onCorrect={correct} onInject={inject} onToast={onToast}
-              showOutliers={showOutliers} expandAll={expandAllFolders}
-              selectedIds={selectedEpisodeIds} onToggleSelection={toggleEpisodeSelection} processingFile={processingFile} />)}
-            {filtered.length === 0 && <div className="empty-state"><Search size={23} /><strong>No hay episodios para mostrar</strong><span>Modifica la búsqueda o el filtro.</span></div>}
-          </div>
-        </div>
-        <div className="table-footer"><span>{filtered.length} de {episodes.length} episodios · {eligibleEpisodes.length} listos para inyección</span><span>Los MKV solo se modifican mediante una operación de inyección confirmada.</span></div>
+              </div>
+              <div className="toolbar-controls">
+                <label className="search-control"><Search size={17} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar episodio..." /></label>
+                <label className="select-control"><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                  <option>Todos los estados</option><option>Preparado</option><option>Revisión necesaria</option><option>Revisión recomendada</option><option>Analizado</option><option>Revisión</option><option>Outlier</option><option>Sin coincidencias</option><option>Desactualizado</option><option>Pendiente</option><option>Error</option><option>Listo</option>
+                </select><ChevronDown size={15} /></label>
+              </div>
+            </div>
+
+            <div className="confidence-summary-bar">
+              <div className="confidence-summary-metrics">
+                <span className="confidence-summary-detections">{confidenceSummary.detections} detecciones</span>
+                <ConfidenceSummaryGroup label="Coincidencia" counts={confidenceSummary.match} />
+                <ConfidenceSummaryGroup label="Inicio" counts={confidenceSummary.temporal} />
+                <span className="confidence-review-count">{reviewQueueCount} episodios con avisos</span>
+              </div>
+              <div className="confidence-batch-actions">
+                <button className="button button-ghost button-small" onClick={() => setStatusFilter('Necesita revisión')} disabled={!reviewQueueCount}>Ver excepciones</button>
+                <button className="button button-secondary button-small" onClick={selectAllEligible} disabled={!scopeEligibleEpisodes.length || active}>
+                  {activeFolderPath ? \`Seleccionar elegibles (\${scopeEligibleEpisodes.length})\` : \`Seleccionar elegibles (\${scopeEligibleEpisodes.length})\`}
+                </button>
+                <button className="button button-primary button-small" onClick={startBatchInjection} disabled={!selectedEligibleEpisodes.length || batchSubmitting || active}>
+                  {batchSubmitting ? 'Preparando…' : \`Inyectar seleccionados (\${selectedEligibleEpisodes.length})\`}
+                </button>
+                {selectedEpisodeIds.size > 0 && <button className="button button-ghost button-small" onClick={() => setSelectedEpisodeIds(new Set())}>Limpiar selección</button>}
+              </div>
+            </div>
+
+            <div className="episode-column-head"><span>EPISODIO / CARPETA</span><span>OPENING</span><span>ENDING</span><span>ESTADO</span><span /></div>
+            <div className="folder-browser-viewport" ref={workspaceScrollRef} aria-label="Carpetas y episodios" tabIndex={0}>
+              <div key={activeFolderPath || 'series-root'} className="folder-browser-content workspace-view-transition">
+                {childFolders.map((folder) => (
+                  <FolderBrowserRow key={folder.path} folder={folder} matchingIds={matchingEpisodeIds} onOpen={openFolder} />
+                ))}
+                {directEpisodes.map((episode) => (
+                  <EpisodeRow
+                    key={episode.file_path}
+                    episode={episode}
+                    onOpen={openEpisode}
+                    selected={selectedEpisodeIds.has(episode.id)}
+                    onToggleSelection={toggleEpisodeSelection}
+                    processingFile={processingFile}
+                  />
+                ))}
+                {!childFolders.length && !directEpisodes.length && (
+                  <div className="empty-state">
+                    <Search size={23} />
+                    <strong>{search || statusFilter !== 'Todos los estados' ? 'No hay elementos que coincidan' : 'Esta carpeta está vacía'}</strong>
+                    <span>Modifica la búsqueda o el filtro para encontrar otros episodios.</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="table-footer">
+              <span>{scopeEpisodes.length} episodios en esta vista · {scopeEligibleEpisodes.length} listos para inyección · {selectedEligibleEpisodes.length} seleccionados</span>
+              <span>Los MKV solo se modifican mediante una operación de inyección confirmada.</span>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+
       </section>
     </div>
   );
