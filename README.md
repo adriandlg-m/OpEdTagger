@@ -1,6 +1,6 @@
 # OpEdTagger — Nueva arquitectura
 
-**Versión de desarrollo: 1.5.2-series-navigation-loading-guard**
+**Versión de desarrollo: 1.6.0-confidence-review-batch-injection**
 
 OpEdTagger analiza episodios de anime para detectar segmentos Opening (OP) y Ending (ED), permite revisar los timestamps y ofrece un flujo separado para inyectar capítulos en archivos MKV.
 
@@ -12,10 +12,12 @@ Esta distribución combina el motor de análisis del proyecto original con la in
 
 - Analizar un MKV **no modifica el archivo original**.
 - Los resultados de análisis, revisión e inyección tienen estados independientes.
-- La inyección requiere revisión aprobada y confirmación explícita.
-- Antes de modificar un MKV se crea una copia de seguridad.
-- Si la inyección falla, el sistema intenta restaurar la copia.
-- Si la aplicación se interrumpe durante la inyección, el registro pasa a `RECOVERY_REQUIRED`; no se repite automáticamente.
+- La inyección permite resultados autoaprobados, recomendaciones de revisión y detecciones verificadas manualmente; las detecciones de baja confianza o sin evaluar quedan bloqueadas hasta resolverlas.
+- El índice de confianza de 0–100 es una métrica heurística de clasificación, no una probabilidad de acierto calibrada.
+- Antes de modificar un MKV se crea una copia de seguridad completa y temporal, verificada por tamaño y fingerprint.
+- La inyección se realiza con `mkvpropedit`; FFprobe comprueba cantidad, títulos y timestamps. Tras guardar el resultado verificado en SQLite, se elimina la copia completa. Si falla la operación, se restaura el original; si la restauración no puede verificarse, el respaldo se conserva en `backups/recovery`.
+- Si la aplicación se interrumpe durante la escritura, el registro pasa a `RECOVERY_REQUIRED`; no se repite automáticamente. Las transacciones interrumpidas antes de empezar a modificar el MKV se limpian y vuelven a `NOT_REQUESTED`.
+- Cuando se reemplazan capítulos existentes, se conserva su XML en `backups/chapters`; este archivo ligero no sustituye a la copia MKV utilizada durante la escritura.
 - Si FFprobe no puede determinar la duración, no se genera una vista previa ni se inyectan capítulos con una duración inventada.
 - La API se enlaza a `127.0.0.1`, no a todas las interfaces de red.
 
@@ -36,19 +38,18 @@ tests/                  Pruebas automatizadas
 - **Backend:** FastAPI.
 - **Persistencia:** SQLite con WAL y claves foráneas.
 - **Trabajos:** cola local persistida con un worker. Los trabajos activos se marcan como interrumpidos al iniciar después de un cierre inesperado; no se repiten solos.
-- **Progreso:** polling REST desde la interfaz.
-- **Motor:** conserva el algoritmo chroma del original (`COSINE_SIMILARITY_THRESHOLD = 0.68`). El valor `score` se presenta como score bruto, nunca como porcentaje ni probabilidad. Los WAV derivados tienen un manifiesto de fingerprints: se regeneran cuando cambia el video fuente y se eliminan si el video fuente desaparece.
-- **Templates:** consulta AnimeThemes; si no hay coincidencia exacta única exige seleccionar el anime. En Detalle de serie se puede buscar y vincular manualmente la entrada correcta; las descargas seleccionadas se preparan en un directorio staging antes de reemplazar la caché anterior.
+- **Progreso:** polling REST desde la interfaz. El proceso de serie muestra las fases de consulta, metadatos, descarga de cada OP/ED, conversión WAV y validación. La barra utiliza bytes transferidos cuando el servidor informa el tamaño y muestra los MB descargados cuando no lo informa.
+- **Motor:** conserva el algoritmo chroma del original (`COSINE_SIMILARITY_THRESHOLD = 0.68`). El detector OP/ED se trata como componente protegido: se conserva el umbral `0.68`, la normalización de chroma, la selección de la coincidencia y el score bruto que determina el ganador. Se añadieron métricas auxiliares normalizadas (similitud, claridad del pico y separación frente a otros templates) sin cambiar qué detecciones acepta el motor. La capa `core/confidence.py` combina esas señales con la consistencia temporal entre episodios del mismo template para producir un índice heurístico de 0–100 por cada OP y ED. El índice no es una probabilidad de acierto y sus umbrales deben calibrarse con detecciones reales verificadas. Los WAV derivados tienen un manifiesto de fingerprints: se regeneran cuando cambia el video fuente y se eliminan si el video fuente desaparece.
+- **Templates:** al analizar una serie, el servicio utiliza el endpoint GraphQL actual de AnimeThemes (`graphql.animethemes.moe`) y su esquema vigente (`animethemes`, `animethemeentries`, `basename`). Sincroniza los resultados cuyo slug o título romaji coincida parcialmente con la carpeta; si no hay coincidencias, conserva el fallback del CLI. Descarga cada Opening/Ending en `video_files`, informa del progreso de transferencia, genera WAV en `songs_files` y valida los audios antes de iniciar la detección. No requiere selección manual. Los vídeos sin cambios se reutilizan; si AnimeThemes no está disponible, puede continuar con una caché local existente.
 
 ## Requisitos
 
 - Windows 10/11 (objetivo prioritario).
 - Python 3.11 o superior.
 - Node.js 20 o superior y npm, necesarios para instalar/build del frontend desde el código fuente.
-- FFmpeg y FFprobe accesibles desde `PATH` o desde el directorio configurado `plugins_path`.
-- MKVToolNix (`mkvmerge` y `mkvpropedit`) para consultar capítulos existentes e inyectarlos.
+- En Windows x64, FFmpeg/FFprobe se preparan automáticamente en segundo plano al iniciar, sin bloquear la interfaz. MKVToolNix se instala en segundo plano cuando se solicita por primera vez una inyección de capítulos. En otros sistemas, las herramientas deben estar instaladas en `plugins_path` o en `PATH`.
 
-Esta distribución detecta y valida la disponibilidad de estas herramientas, pero todavía no las descarga ni instala automáticamente. El instalador de plugins del ZIP original utilizaba extracción de archivos sin validación suficiente de rutas y dependía de URLs/versiones antiguas; por seguridad no se ha trasladado. Instala las herramientas desde sus fuentes oficiales y configura `plugins_path` o `PATH`.
+En Windows x64, FFmpeg/FFprobe se descargan y verifican en segundo plano durante el arranque; MKVToolNix se descarga solo al solicitar una inyección. Las descargas se verifican mediante SHA-256, se extraen en un directorio temporal con validación de rutas y solo se activan después de superar una comprobación de versión. El primer análisis espera a que FFmpeg/FFprobe estén listos. Si la instalación falla, el backend sigue disponible para las funciones que no dependan de esas herramientas y comunica el error en Settings. En otras plataformas se requiere que estén instaladas en `plugins_path` o en `PATH`.
 - Conexión a Internet para consultar AnimeThemes y descargar templates.
 
 La detección puede ejecutarse con FFmpeg y templates ya disponibles. La escritura de capítulos necesita además MKVToolNix.
@@ -76,13 +77,17 @@ Los archivos `.bat` son accesos rápidos compatibles con doble clic y priorizan 
 
 ## Ubicación de datos
 
-La aplicación guarda configuración, SQLite, templates descargados, archivos temporales y logs en el directorio de datos del usuario:
+La aplicación separa los datos de ejecución de los recursos de trabajo. Configuración, SQLite, cargas temporales y logs se guardan en el directorio de datos del usuario:
 
 - Windows: `%LOCALAPPDATA%\OpEdTagger`
 - macOS: `~/Library/Application Support/OpEdTagger`
 - Linux: `$XDG_DATA_HOME/OpEdTagger` o `~/.local/share/OpEdTagger`
 
-Se pueden sobrescribir las ubicaciones mediante `OPEDTAGGER_DATA_DIR` y `OPEDTAGGER_CONFIG_PATH`.
+Los respaldos se guardan por defecto en `OpEdTagger/backups/` si la raíz del proyecto permite escritura. En instalaciones dentro de directorios protegidos se utiliza `%LOCALAPPDATA%\OpEdTagger\backups` (o el directorio de datos equivalente). La ruta puede configurarse desde Settings. La carpeta contiene `temporary/` (copias MKV durante una transacción), `recovery/` (archivos que requieren inspección) y `chapters/` (XML ligeros de capítulos reemplazados). Los respaldos anteriores que ya existan en AppData no se mueven ni duplican automáticamente.
+
+Las carpetas `templates/` y `plugins/` se encuentran en la raíz del proyecto. Cada serie utiliza `templates/<serie>/video_files` para los vídeos OP/ED y `templates/<serie>/songs_files` para los WAV derivados. Las herramientas multimedia se instalan en `plugins/`. Estas carpetas están excluidas de Git.
+
+Se pueden sobrescribir las ubicaciones mediante `OPEDTAGGER_DATA_DIR` y `OPEDTAGGER_CONFIG_PATH`. Al detectar las rutas predeterminadas de versiones anteriores, OpEdTagger copia los archivos existentes a las nuevas ubicaciones sin sobrescribir archivos de destino ni borrar las carpetas de origen. La migración se marca como completada para no recorrer repetidamente bibliotecas grandes.
 
 La biblioteca del usuario no se copia al directorio de datos. Las cargas del análisis individual se almacenan temporalmente y se eliminan al finalizar el trabajo.
 
@@ -92,11 +97,10 @@ La biblioteca del usuario no se copia al directorio de datos. Las cargas del an�
 
 1. Configura e indexa la biblioteca.
 2. Abre una serie y pulsa **Analizar serie**.
-3. El worker reutiliza resultados de caché únicamente cuando coinciden la versión del analizador, la firma de templates, el tamaño, la fecha de modificación y el fingerprint muestreado del archivo.
-4. Revisa los episodios con coincidencias.
-5. Ajusta manualmente los timestamps si es necesario y guarda los cambios.
-6. Pulsa **Aprobar detecciones**.
-7. Para inyectar, revisa la vista previa y confirma. Si el MKV ya tiene capítulos, se solicitará una segunda confirmación para reemplazarlos.
+3. El worker sincroniza los templates, prepara los WAV y analiza los episodios. Reutiliza caché solo cuando coinciden la versión del analizador, la versión del modelo de confianza, la firma de templates, el tamaño, la fecha de modificación y el fingerprint muestreado del MKV.
+4. Cada Opening y Ending encontrado recibe una puntuación de confianza independiente de 0 a 100: alta (90–100), media (70–89), baja (0–69) o sin evaluar. La detección se guarda automáticamente aunque necesite revisión.
+5. Abre **Ver excepciones** para revisar los resultados de baja confianza o las detecciones medias recomendadas. Puedes corregir los segundos o descartar un OP/ED falso positivo. El resultado original permanece en la base de datos y cada corrección o retirada se registra en el historial.
+6. Selecciona los episodios elegibles y pulsa **Inyectar seleccionados**. Antes de iniciar, OpEdTagger comprueba el espacio en la ubicación de respaldos; la vista previa muestra el tamaño total, el MKV más grande, el espacio requerido/disponible y cuántos archivos ya contienen capítulos. Tras confirmar, procesa los MKV secuencialmente: conserva una copia completa temporal mientras escribe y verifica cada archivo; cuando el resultado queda registrado en SQLite, elimina esa copia. Si una restauración falla o la aplicación se interrumpe durante la escritura, conserva el original en `backups/recovery/`. Si se reemplazan capítulos existentes, su XML original se conserva en `backups/chapters/`.
 
 Los episodios sin coincidencias se conservan como `NO_MATCH`, no como errores ni como análisis exitosos con datos vacíos.
 
@@ -108,7 +112,7 @@ La pantalla permite seleccionar un MKV, consultar AnimeThemes y elegir un result
 
 ### Selección de templates
 
-Para el procesamiento por serie se reutiliza la carpeta de templates existente. Si está vacía, el servicio intenta una coincidencia exacta única con AnimeThemes. Si hay ambigüedad, el trabajo informa del problema en vez de descargar resultados potencialmente incorrectos. La API también expone búsqueda y descarga mediante `/api/templates/search` y `/api/templates/download`.
+Para el procesamiento por serie, las plantillas gestionadas por AnimeThemes se sincronizan al pulsar Analizar. El job limpia el nombre local (año y etiquetas entre corchetes), consulta `https://graphql.animethemes.moe/` mediante `search(search:, first:)` y obtiene el detalle OP/ED de cada slug con `anime(slug:)`. Usa todos los resultados cuyo slug o título romaji coincida parcialmente; si no hay coincidencias, conserva el fallback del CLI. Cada descarga informa el tipo (Opening/Ending), el archivo y los bytes recibidos. La barra es indeterminada mientras se consulta la API o cuando el servidor omite el tamaño total; al completar la sincronización muestra conversión WAV y validación. Los vídeos que no hayan cambiado se reutilizan desde disco. Si AnimeThemes no responde, se reutiliza la caché local existente; sin caché se presenta el error real del servicio y no se inicia el detector. La cancelación manual se respeta durante peticiones y transferencias. La API conserva los endpoints de búsqueda y descarga para integraciones externas.
 
 ## Migración desde `anime_master.json`
 
@@ -165,7 +169,8 @@ La documentación interactiva de FastAPI se encuentra en `http://127.0.0.1:8000/
 - AniList está integrado mediante su API pública GraphQL: no requiere token, API key ni configuración en Settings. Desde el Dashboard o el detalle de una serie puedes buscar por el nombre de la carpeta, modificar manualmente el título, elegir una coincidencia o cargar una imagen local. Consulta `docs/ANILIST_ARTWORK.md` para el flujo, caché, atribución y condiciones de uso.
 - No se ha creado un instalador ni un ejecutable empaquetado; la estructura está preparada para una fase posterior.
 - Los archivos MKV del análisis individual todavía no se pueden revisar/injectar desde esa pantalla.
-- La UI de revisión manual está disponible para episodios indexados en una biblioteca; debe probarse visualmente en Windows.
+- La UI de revisión de excepciones, la corrección/retirada individual de segmentos y la inyección masiva están disponibles para episodios indexados en una biblioteca; deben probarse visualmente en Windows.
+- El índice de confianza es heurístico y todavía necesita calibración con un conjunto etiquetado de detecciones OP/ED correctas e incorrectas. Las puntuaciones no deben interpretarse como porcentajes de probabilidad.
 - El seguimiento usa polling; SSE puede evaluarse más adelante si es necesario.
 - La cola es de un worker local y no reanuda por sí sola trabajos interrumpidos.
 - No se han ejecutado pruebas reales de descarga externa ni de modificación MKV en este entorno.

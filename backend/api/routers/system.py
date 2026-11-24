@@ -1,10 +1,14 @@
 from pathlib import Path
 import shutil
+
 from fastapi import APIRouter, HTTPException
+
 from backend.infrastructure.config import load_config, resolve_library_path, app_data_dir
 from backend.infrastructure.database import database_path
+from backend.services.plugin_manager import plugin_manager_status
 
 router = APIRouter(prefix="/system", tags=["System"])
+
 
 @router.get("/health")
 def system_health():
@@ -16,17 +20,27 @@ def system_health():
         library_ok = True
     except Exception:
         library = cfg.get("library_path") or None
+
     plugins = Path(cfg["plugins_path"])
     tools = {}
-    for name in ("ffmpeg", "ffprobe", "mkvpropedit", "mkvmerge"):
-        found = shutil.which(name) or shutil.which(name + ".exe")
-        if not found and plugins.exists():
-            candidates = list(plugins.rglob(name + ".exe"))
+    for name in ("ffmpeg", "ffprobe", "mkvpropedit", "mkvmerge", "mkvextract"):
+        found = None
+        if plugins.exists():
+            candidates = list(plugins.rglob(name + ".exe")) + list(plugins.rglob(name))
             found = str(candidates[0]) if candidates else None
+        if not found:
+            found = shutil.which(name) or shutil.which(name + ".exe")
         tools[name] = {"available": bool(found), "path": found}
-    return {"status": "ok", "library_configured": library_ok, "library_path": library,
-            "database_path": str(database_path()), "data_directory": str(app_data_dir()),
-            "tools": tools}
+
+    return {
+        "status": "ok",
+        "library_configured": library_ok,
+        "library_path": library,
+        "database_path": str(database_path()),
+        "data_directory": str(app_data_dir()),
+        "tools": tools,
+        "plugin_manager": plugin_manager_status(cfg),
+    }
 
 
 @router.post("/select-folder")

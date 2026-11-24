@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE || '/api';
+const API_BASE = import.meta.env?.VITE_API_BASE || '/api';
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -41,6 +41,14 @@ export const api = {
   },
   settings: () => request('/settings'),
   saveSettings: (payload) => request('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  backupSummary: () => request('/settings/backups'),
+  openBackupsFolder: (section = 'root') => request('/settings/backups/open', {
+    method: 'POST', body: JSON.stringify({ section }),
+  }),
+  restoreRecoveryBackup: (transactionId) => request(
+    `/settings/backups/recovery/${encodeURIComponent(transactionId)}/restore`,
+    { method: 'POST' },
+  ),
   preferences: () => request('/settings/preferences'),
   savePreferences: (payload) => request('/settings/preferences', { method: 'PUT', body: JSON.stringify(payload) }),
   searchAnimeArtwork: (seriesName, query = '') => request('/artwork/search', {
@@ -73,8 +81,63 @@ export const api = {
   injectChapters: (id, replaceExisting) => request(`/episodes/${id}/inject`, {
     method: 'POST', body: JSON.stringify({ confirm: true, replace_existing_chapters: replaceExisting }),
   }),
+  previewBatchInjection: (seriesName, episodeIds, replaceExisting = false) => request(
+    `/jobs/series/${encodeURIComponent(seriesName)}/inject/preflight`,
+    { method: 'POST', body: JSON.stringify({
+      episode_ids: episodeIds,
+      replace_existing_chapters: Boolean(replaceExisting),
+    }) },
+  ),
+  startBatchInjection: (seriesName, episodeIds, replaceExisting) => request(
+    `/jobs/series/${encodeURIComponent(seriesName)}/inject`,
+    { method: 'POST', body: JSON.stringify({
+      episode_ids: episodeIds,
+      replace_existing_chapters: Boolean(replaceExisting),
+    }) },
+  ),
   exportLogsUrl: () => `${API_BASE}/logs/export`,
 };
+
+export function formatEditableTimestamp(seconds) {
+  if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) return '';
+  const totalMilliseconds = Math.max(0, Math.round(Number(seconds) * 1000));
+  const hours = Math.floor(totalMilliseconds / 3600000);
+  const totalMinutes = Math.floor(totalMilliseconds / 60000);
+  const minutes = hours > 0 ? Math.floor((totalMilliseconds % 3600000) / 60000) : totalMinutes;
+  const wholeSeconds = Math.floor((totalMilliseconds % 60000) / 1000);
+  const milliseconds = totalMilliseconds % 1000;
+  const pad = (value, size = 2) => String(value).padStart(size, '0');
+
+  return hours > 0
+    ? `${pad(hours)}:${pad(minutes)}:${pad(wholeSeconds)}.${pad(milliseconds, 3)}`
+    : `${pad(minutes)}:${pad(wholeSeconds)}.${pad(milliseconds, 3)}`;
+}
+
+export function parseEditableTimestamp(value) {
+  const text = String(value ?? '').trim().replace(',', '.');
+  if (!text) return null;
+
+  const mmss = text.match(/^(\d+):([0-5]?\d)(?:\.(\d{1,3}))?$/);
+  const hhmmss = text.match(/^(\d+):([0-5]\d):([0-5]\d)(?:\.(\d{1,3}))?$/);
+  const toMilliseconds = (fraction = '') => Number((fraction + '000').slice(0, 3));
+
+  if (mmss) {
+    const minutes = Number(mmss[1]);
+    const seconds = Number(mmss[2]);
+    const milliseconds = toMilliseconds(mmss[3]);
+    return minutes * 60 + seconds + milliseconds / 1000;
+  }
+
+  if (hhmmss) {
+    const hours = Number(hhmmss[1]);
+    const minutes = Number(hhmmss[2]);
+    const seconds = Number(hhmmss[3]);
+    const milliseconds = toMilliseconds(hhmmss[4]);
+    return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
+  }
+
+  return null;
+}
 
 export function formatTimestamp(seconds) {
   if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) return '—';
@@ -101,21 +164,26 @@ export function mapEpisode(episode) {
   else if (episode.analysis_status === 'STALE') status = 'Desactualizado';
   else if (episode.analysis_status === 'NO_MATCH') status = 'Sin coincidencias';
   else if (episode.analysis_status === 'COMPLETED') {
-    if (hasOutlier) status = 'Outlier';
-    else if (episode.review_status === 'PENDING') status = 'Revisión';
+    if (hasOutlier && episode.review_status === 'PENDING') status = 'Revisión necesaria';
+    else if (episode.review_status === 'PENDING') status = 'Revisión necesaria';
+    else if (episode.review_status === 'REVIEW_RECOMMENDED') status = 'Revisión recomendada';
     else if (episode.injection_status === 'SUCCEEDED') status = 'Listo';
+    else if (['AUTO_APPROVED', 'MANUALLY_REVIEWED', 'APPROVED'].includes(episode.review_status)) status = 'Preparado';
+    else if (hasOutlier) status = 'Outlier';
     else status = 'Analizado';
   }
   const segment = (value) => value ? `${formatTimestamp(value.start)}–${formatTimestamp(value.end)}` : '—';
-  const score = (value) => value && Number.isFinite(Number(value.score)) ? Number(value.score).toFixed(3) : '—';
+  const confidence = (value) => value && Number.isFinite(Number(value.confidence_score))
+    ? Number(value.confidence_score)
+    : null;
   return {
     ...episode,
     id: episode.id,
     displayId: episode.display_name || episode.file_name,
     opening: segment(episode.op),
     ending: segment(episode.ed),
-    openingScore: score(episode.op),
-    endingScore: score(episode.ed),
+    openingScore: confidence(episode.op),
+    endingScore: confidence(episode.ed),
     status,
   };
 }

@@ -1,27 +1,104 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from backend.infrastructure import config as config_module
 from backend.infrastructure.config import load_config, resolve_within, save_config
 
 
-def test_default_config_uses_user_data_directory(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPEDTAGGER_DATA_DIR", str(tmp_path / "appdata"))
+def _isolate_paths(monkeypatch, tmp_path):
+    app_data = tmp_path / "appdata"
+    root = tmp_path / "project"
+    root.mkdir()
+    monkeypatch.setenv("OPEDTAGGER_DATA_DIR", str(app_data))
+    monkeypatch.setattr(config_module, "project_root", lambda: root)
+    return app_data, root
+
+
+def test_default_config_keeps_user_data_separate_and_uses_project_root_for_templates_and_plugins(tmp_path, monkeypatch):
+    app_data, root = _isolate_paths(monkeypatch, tmp_path)
     config = load_config()
-    assert Path(config["database_path"]).parent == tmp_path / "appdata"
-    assert Path(config["template_path"]).is_absolute()
-    assert (tmp_path / "appdata" / "config.json").exists()
+
+    assert Path(config["database_path"]).parent == app_data
+    assert Path(config["template_path"]) == root / "templates"
+    assert Path(config["plugins_path"]) == root / "plugins"
+    assert Path(config["backup_path"]) == root / "backups"
+    assert (app_data / "config.json").exists()
+
+
+def test_load_config_migrates_old_appdata_directories_without_deleting_the_source(tmp_path, monkeypatch):
+    app_data, root = _isolate_paths(monkeypatch, tmp_path)
+    old_templates = app_data / "templates"
+    old_plugins = app_data / "plugins"
+    (old_templates / "Show" / "video_files").mkdir(parents=True)
+    (old_templates / "Show" / "video_files" / "opening.webm").write_bytes(b"template-video")
+    (old_plugins / "FFMPEG" / "bin").mkdir(parents=True)
+    (old_plugins / "FFMPEG" / "bin" / "ffmpeg.exe").write_bytes(b"old-tool")
+
+    app_data.mkdir(parents=True, exist_ok=True)
+    (app_data / "config.json").write_text(json.dumps({
+        "library_path": "",
+        "template_path": str(old_templates),
+        "plugins_path": str(old_plugins),
+    }), encoding="utf-8")
+
+    config = load_config()
+
+    assert Path(config["template_path"]) == root / "templates"
+    assert Path(config["plugins_path"]) == root / "plugins"
+    assert (root / "templates" / "Show" / "video_files" / "opening.webm").read_bytes() == b"template-video"
+    assert (root / "plugins" / "FFMPEG" / "bin" / "ffmpeg.exe").read_bytes() == b"old-tool"
+    # The original locations remain available until the user verifies the migration.
+    assert (old_templates / "Show" / "video_files" / "opening.webm").exists()
+    assert (old_plugins / "FFMPEG" / "bin" / "ffmpeg.exe").exists()
+    persisted = json.loads((app_data / "config.json").read_text(encoding="utf-8"))
+    assert persisted["template_path"] == str(root / "templates")
+    assert persisted["plugins_path"] == str(root / "plugins")
+
+
+def test_load_config_imports_original_cli_template_folder_on_fresh_install(tmp_path, monkeypatch):
+    _app_data, root = _isolate_paths(monkeypatch, tmp_path)
+    legacy = root / "template" / "Show" / "video_files"
+    legacy.mkdir(parents=True)
+    (legacy / "OP1.webm").write_bytes(b"legacy-video")
+
+    config = load_config()
+
+    assert Path(config["template_path"]) == root / "templates"
+    assert (root / "templates" / "Show" / "video_files" / "OP1.webm").read_bytes() == b"legacy-video"
+
+
+def test_load_config_upgrades_layout_v1_templates_to_lowercase_without_losing_files(tmp_path, monkeypatch):
+    app_data, root = _isolate_paths(monkeypatch, tmp_path)
+    legacy = root / "templates" / "Show" / "video_files"
+    legacy.mkdir(parents=True)
+    (legacy / "OP1.webm").write_bytes(b"existing-template")
+    app_data.mkdir(parents=True, exist_ok=True)
+    (app_data / "config.json").write_text(json.dumps({
+        "template_path": str(root / "templates"),
+        "plugins_path": str(root / "plugins"),
+        "_storage_layout_version": 1,
+    }), encoding="utf-8")
+
+    config = load_config()
+
+    assert Path(config["template_path"]) == root / "templates"
+    assert (root / "templates" / "Show" / "video_files" / "OP1.webm").read_bytes() == b"existing-template"
+    assert config["_storage_layout_version"] == 2
+    assert (root / "templates").is_dir()
 
 
 def test_save_config_validates_and_normalizes_paths(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPEDTAGGER_DATA_DIR", str(tmp_path / "appdata"))
+    _app_data, _root = _isolate_paths(monkeypatch, tmp_path)
     library = tmp_path / "Anime"
     library.mkdir()
     config = save_config({"library_path": str(library)})
     assert config["library_path"] == str(library.resolve())
     assert Path(config["template_path"]).is_dir()
+    assert Path(config["plugins_path"]).is_dir()
     with pytest.raises(ValueError, match="existing directory"):
         save_config({"library_path": str(tmp_path / "missing")})
 
@@ -51,7 +128,8 @@ def test_resolve_within_rejects_symlink_escape(tmp_path):
         resolve_within(root, link)
 
 
-def test_save_config_rejects_managed_directories_inside_library(tmp_path):
+def test_save_config_rejects_managed_directories_inside_library(tmp_path, monkeypatch):
+    _app_data, _root = _isolate_paths(monkeypatch, tmp_path)
     library = tmp_path / "library"
     library.mkdir()
     backup_dir = library / "backups"
@@ -60,10 +138,11 @@ def test_save_config_rejects_managed_directories_inside_library(tmp_path):
     assert not backup_dir.exists()
 
 
-def test_scan_library_reconciles_removed_episodes_and_series(tmp_path):
+def test_scan_library_reconciles_removed_episodes_and_series(tmp_path, monkeypatch):
     from backend.infrastructure.database import db_session, init_db
     from backend.services.library_service import list_series, scan_library
 
+    _isolate_paths(monkeypatch, tmp_path)
     library = tmp_path / "library"
     show = library / "Show One"
     show.mkdir(parents=True)
@@ -91,3 +170,49 @@ def test_scan_library_reconciles_removed_episodes_and_series(tmp_path):
     with db_session() as conn:
         assert conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM series").fetchone()[0] == 1
+
+
+
+def test_load_config_migrates_empty_legacy_backup_folder_to_project_root(tmp_path, monkeypatch):
+    app_data, root = _isolate_paths(monkeypatch, tmp_path)
+    legacy_backups = app_data / "backups"
+    legacy_backups.mkdir(parents=True)
+    app_data.mkdir(parents=True, exist_ok=True)
+    (app_data / "config.json").write_text(json.dumps({
+        "backup_path": str(legacy_backups),
+    }), encoding="utf-8")
+
+    config = load_config()
+
+    assert Path(config["backup_path"]) == root / "backups"
+    persisted = json.loads((app_data / "config.json").read_text(encoding="utf-8"))
+    assert persisted["_backup_layout_version"] == 1
+
+
+def test_load_config_preserves_nonempty_legacy_backup_folder_without_copying_or_deleting(tmp_path, monkeypatch):
+    app_data, root = _isolate_paths(monkeypatch, tmp_path)
+    legacy_backups = app_data / "backups"
+    legacy_backups.mkdir(parents=True)
+    old_backup = legacy_backups / "episode.backup-abc.mkv"
+    old_backup.write_bytes(b"large original backup")
+    app_data.mkdir(parents=True, exist_ok=True)
+    (app_data / "config.json").write_text(json.dumps({
+        "backup_path": str(legacy_backups),
+    }), encoding="utf-8")
+
+    config = load_config()
+
+    assert Path(config["backup_path"]) == legacy_backups
+    assert old_backup.read_bytes() == b"large original backup"
+    assert not (root / "backups" / "episode.backup-abc.mkv").exists()
+
+
+
+def test_default_backup_path_falls_back_to_appdata_when_project_root_is_not_writable(tmp_path, monkeypatch):
+    app_data, root = _isolate_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(config_module.os, "access", lambda _path, _mode: False)
+
+    config = load_config()
+
+    assert Path(config["backup_path"]) == app_data / "backups"
+    assert not (root / "backups").exists()

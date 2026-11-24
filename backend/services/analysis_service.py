@@ -4,6 +4,7 @@ import json
 import logging
 import statistics
 import threading
+import wave
 from pathlib import Path
 from typing import Callable
 
@@ -12,7 +13,9 @@ from backend.infrastructure.database import db_session, utc_now
 from backend.services.library_service import scan_library, get_series_detail
 from backend.services.log_service import log_event
 from backend.services.template_service import ensure_templates
+from backend.services.plugin_manager import ensure_analysis_plugins
 from core.analyzer import evaluate_episode_templates, prepare_song_templates
+from core.confidence import CONFIDENCE_MODEL_VERSION, assess_segment, episode_review_status
 from core.fingerprints import ANALYZER_VERSION, file_fingerprint, templates_signature
 from core.media_tools import build_chapters, get_mkv_duration
 
@@ -35,8 +38,10 @@ def _get_episode(episode_id: int) -> dict:
 def _persist_analysis(episode_id: int | None, path: Path, op: dict | None, ed: dict | None,
                       template_sig: str, *, source: str = "engine", expected_fingerprint: str | None = None) -> None:
     stat = path.stat()
+    op = assess_segment(op)
+    ed = assess_segment(ed)
     status = "NO_MATCH" if not op and not ed else "COMPLETED"
-    review = "NOT_REQUIRED" if status == "NO_MATCH" else "PENDING"
+    review = episode_review_status(op, ed)
     stamp = utc_now()
     fingerprint = file_fingerprint(path)
     if expected_fingerprint and fingerprint != expected_fingerprint:
@@ -46,10 +51,13 @@ def _persist_analysis(episode_id: int | None, path: Path, op: dict | None, ed: d
     with db_session() as conn:
         conn.execute(
             "INSERT INTO analysis_results(episode_id,analysis_status,review_status,injection_status,op_json,ed_json,"
-            "analyzer_version,template_signature,analyzed_file_size,analyzed_file_mtime,content_fingerprint,source,created_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(episode_id) DO UPDATE SET "
+            "op_original_json,ed_original_json,confidence_version,analyzer_version,template_signature,"
+            "analyzed_file_size,analyzed_file_mtime,content_fingerprint,source,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(episode_id) DO UPDATE SET "
             "analysis_status=excluded.analysis_status,review_status=excluded.review_status,"
-            "op_json=excluded.op_json,ed_json=excluded.ed_json,is_anomaly_op=0,is_anomaly_ed=0,"
+            "op_json=excluded.op_json,ed_json=excluded.ed_json,"
+            "op_original_json=excluded.op_original_json,ed_original_json=excluded.ed_original_json,"
+            "confidence_version=excluded.confidence_version,is_anomaly_op=0,is_anomaly_ed=0,"
             "analyzer_version=excluded.analyzer_version,template_signature=excluded.template_signature,"
             "analyzed_file_size=excluded.analyzed_file_size,"
             "analyzed_file_mtime=excluded.analyzed_file_mtime,content_fingerprint=excluded.content_fingerprint,"
@@ -57,7 +65,8 @@ def _persist_analysis(episode_id: int | None, path: Path, op: dict | None, ed: d
             "THEN analysis_results.injection_status ELSE excluded.injection_status END,"
             "source=excluded.source,error=NULL,updated_at=excluded.updated_at",
             (episode_id, status, review, "NOT_REQUESTED", json.dumps(op) if op else None,
-             json.dumps(ed) if ed else None, ANALYZER_VERSION, template_sig, stat.st_size,
+             json.dumps(ed) if ed else None, json.dumps(op) if op else None, json.dumps(ed) if ed else None,
+             CONFIDENCE_MODEL_VERSION, ANALYZER_VERSION, template_sig, stat.st_size,
              stat.st_mtime, fingerprint, source, stamp, stamp),
         )
 
@@ -98,6 +107,8 @@ def _valid_cache(episode_id: int, path: Path, template_sig: str) -> dict | None:
         return None
     if row["analyzer_version"] != ANALYZER_VERSION or row["template_signature"] != template_sig:
         return None
+    if row["confidence_version"] != CONFIDENCE_MODEL_VERSION:
+        return None
     if row["analyzed_file_size"] != stat.st_size or row["analyzed_file_mtime"] != stat.st_mtime:
         return None
     if not row["content_fingerprint"] or row["content_fingerprint"] != file_fingerprint(path):
@@ -128,14 +139,63 @@ def _find_episode_id(path: Path) -> int | None:
     return int(row["id"]) if row else None
 
 
-def _get_templates(series_name: str, selected_slug: str | None, progress: Callable | None = None) -> tuple[list[Path], str]:
-    cfg = load_config()
-    template_dir = ensure_templates(series_name, selected_slug, progress)
-    wav_templates = prepare_song_templates(template_dir, Path(cfg["plugins_path"]).expanduser().resolve(), on_template_progress=progress)
-    if not wav_templates:
-        raise RuntimeError(f"No usable WAV templates are available for '{series_name}'. Check FFmpeg and the template files.")
-    return wav_templates, templates_signature(wav_templates)
+def _validate_wav_templates(wav_templates: list[Path], series_name: str) -> list[Path]:
+    """Exclude broken/empty WAVs before they reach the protected detector."""
+    valid: list[Path] = []
+    invalid: list[str] = []
+    for template in wav_templates:
+        try:
+            with wave.open(str(template), "rb") as audio:
+                if audio.getnframes() <= 0 or audio.getframerate() <= 0 or audio.getnchannels() <= 0:
+                    raise wave.Error("WAV has no usable audio frames.")
+                if audio.getsampwidth() not in {1, 2, 3, 4}:
+                    raise wave.Error("WAV has an unsupported sample width.")
+            valid.append(template)
+        except (OSError, EOFError, wave.Error) as exc:
+            invalid.append(f"{template.name} ({exc})")
 
+    if invalid:
+        logger.warning("Ignoring invalid WAV templates for %s: %s", series_name, "; ".join(invalid))
+    if not valid:
+        detail = "; ".join(invalid[:8]) if invalid else "No WAV files were generated."
+        raise RuntimeError(
+            f"No valid WAV templates are available for '{series_name}'. "
+            f"Check the downloaded videos and FFmpeg conversion. {detail}"
+        )
+    return valid
+
+
+def _get_templates(
+    series_name: str,
+    selected_slug: str | None,
+    progress: Callable[[str, float, str], None] | None = None,
+) -> tuple[list[Path], str]:
+    cfg = load_config()
+    plugin_state = ensure_analysis_plugins(cfg)
+    if plugin_state.get("status") not in {"ready", "analysis_ready"}:
+        reason = plugin_state.get("last_error") or plugin_state.get("message") or "FFmpeg/FFprobe are unavailable."
+        raise RuntimeError(f"Multimedia tools are not ready: {reason}")
+
+    if progress:
+        progress("searching_templates", 0.5, f"Preparando templates de {series_name}")
+    template_dir = ensure_templates(series_name, selected_slug, progress)
+
+    def conversion_progress(index: int, total: int, name: str) -> None:
+        if progress:
+            percentage = 72.0 + ((index + 1) / max(total, 1)) * 18.0
+            progress("converting_templates", percentage, f"Verificando conversión WAV · {name}")
+
+    wav_templates = prepare_song_templates(
+        template_dir,
+        Path(cfg["plugins_path"]).expanduser().resolve(),
+        on_template_progress=conversion_progress,
+    )
+    if progress:
+        progress("validating_templates", 94.0, "Validando archivos WAV")
+    wav_templates = _validate_wav_templates(wav_templates, series_name)
+    if progress:
+        progress("validating_templates", 100.0, f"{len(wav_templates)} plantillas WAV válidas")
+    return wav_templates, templates_signature(wav_templates)
 
 def _best(candidates: list[dict]) -> dict | None:
     return max(candidates, key=lambda item: item["score"]) if candidates else None
@@ -144,8 +204,33 @@ def _best(candidates: list[dict]) -> dict | None:
 def _as_record(candidate: dict | None) -> dict | None:
     if not candidate:
         return None
-    return {"name": candidate["name"], "start": float(candidate["start"]),
-            "end": float(candidate["end"]), "score": float(candidate["score"])}
+    record = {"name": candidate["name"], "start": float(candidate["start"]),
+              "end": float(candidate["end"]), "score": float(candidate["score"])}
+    for key in ("similarity_score", "peak_prominence", "peak_width_seconds", "template_frames", "template_margin"):
+        if key in candidate:
+            record[key] = candidate[key]
+    return record
+
+
+def _best_record(candidates: list[dict]) -> dict | None:
+    winner = _best(candidates)
+    if not winner:
+        return None
+    record = _as_record(winner)
+    winner_similarity = winner.get("similarity_score")
+    alternatives = [
+        float(item["similarity_score"])
+        for item in candidates
+        if item is not winner
+        and item.get("similarity_score") is not None
+    ]
+    if winner_similarity is not None and alternatives:
+        runner_up = max(alternatives)
+        record["template_margin"] = max(
+            0.0,
+            min(1.0, (float(winner_similarity) - runner_up) / max(abs(float(winner_similarity)), 1e-8)),
+        )
+    return record
 
 
 def analyze_path(path: Path, series_name: str, *, selected_slug: str | None = None,
@@ -171,13 +256,15 @@ def analyze_path(path: Path, series_name: str, *, selected_slug: str | None = No
     op_candidates, ed_candidates = evaluate_episode_templates(
         path, wavs, plugins, progress_callback=episode_progress, cancel_event=cancel_event
     )
-    op, ed = _as_record(_best(op_candidates)), _as_record(_best(ed_candidates))
+    op, ed = _best_record(op_candidates), _best_record(ed_candidates)
     if templates_signature(wavs) != signature:
         raise RuntimeError("Templates changed during analysis. Run the analysis again.")
     _persist_analysis(episode_id, path, op, ed, signature, expected_fingerprint=original_fingerprint)
+    op = assess_segment(op)
+    ed = assess_segment(ed)
     result = {"file_name": path.name, "file_path": str(path), "op": op, "ed": ed,
               "analysis_status": "NO_MATCH" if not op and not ed else "COMPLETED",
-              "review_status": "NOT_REQUIRED" if not op and not ed else "PENDING",
+              "review_status": episode_review_status(op, ed),
               "injection_status": "NOT_REQUESTED", "is_anomaly_op": False,
               "is_anomaly_ed": False, "source": "engine", "cached": False}
     log_event("INFO", "Analysis", "Episode analysis completed." if op or ed else "No OP/ED match found.",
@@ -187,23 +274,117 @@ def analyze_path(path: Path, series_name: str, *, selected_slug: str | None = No
 
 
 def _apply_anomalies(series_name: str) -> None:
-    detail = get_series_detail(series_name)
-    episodes = detail["episodes"]
-    op_values = [e["op"]["start"] for e in episodes if e.get("analysis_status") == "COMPLETED" and e.get("op")]
-    ed_values = [e["ed"]["start"] for e in episodes if e.get("analysis_status") == "COMPLETED" and e.get("ed")]
-    median_op = statistics.median(op_values) if op_values else None
-    median_ed = statistics.median(ed_values) if ed_values else None
+    """Score detections against other episodes that use the same OP/ED template.
+
+    Cross-episode timing is only used when there are at least three comparable
+    detections. Different openings/endings are never compared to one another.
+    """
     with db_session() as conn:
-        for episode in episodes:
-            if episode.get("id") is None:
-                continue
-            is_completed = episode.get("analysis_status") == "COMPLETED"
-            anomaly_op = bool(is_completed and median_op is not None and episode.get("op")
-                              and abs(episode["op"]["start"] - median_op) > 180)
-            anomaly_ed = bool(is_completed and median_ed is not None and episode.get("ed")
-                              and abs(episode["ed"]["start"] - median_ed) > 180)
-            conn.execute("UPDATE analysis_results SET is_anomaly_op=?,is_anomaly_ed=?,updated_at=? WHERE episode_id=?",
-                         (int(anomaly_op), int(anomaly_ed), utc_now(), episode["id"]))
+        rows = conn.execute(
+            "SELECT e.id AS episode_id, ar.op_json, ar.ed_json, "
+            "ar.op_original_json, ar.ed_original_json "
+            "FROM episodes e JOIN analysis_results ar ON ar.episode_id=e.id "
+            "WHERE e.series_name=? AND ar.analysis_status='COMPLETED'",
+            (series_name,),
+        ).fetchall()
+
+    records = []
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for row in rows:
+        current = {}
+        original = {}
+        for kind in ("OP", "ED"):
+            current_json = row[f"{kind.lower()}_json"]
+            original_json = row[f"{kind.lower()}_original_json"]
+            try:
+                current_segment = json.loads(current_json) if current_json else None
+                original_segment = json.loads(original_json) if original_json else current_segment
+            except (TypeError, ValueError):
+                current_segment = original_segment = None
+            current[kind] = current_segment
+            original[kind] = original_segment
+            # Keep dismissed and manually verified detections out of the
+            # automatic outlier baseline. Their original values remain available
+            # for audit, but must not influence current anomaly counts.
+            if original_segment and current_segment and not current_segment.get("manual_verified"):
+                key = (kind, str(original_segment.get("name") or kind))
+                groups.setdefault(key, []).append({
+                    "episode_id": int(row["episode_id"]),
+                    "start": float(original_segment.get("start", 0.0)),
+                })
+        records.append({
+            "episode_id": int(row["episode_id"]),
+            "current": current,
+            "original": original,
+        })
+
+    assessments: dict[tuple[int, str], tuple[dict | None, bool]] = {}
+    for (kind, _template_name), matches in groups.items():
+        starts = [item["start"] for item in matches]
+        enough_samples = len(starts) >= 3
+        median = statistics.median(starts) if enough_samples else None
+        mad = statistics.median([abs(value - median) for value in starts]) if enough_samples else None
+        # A robust tolerance adapts to normal timing variation but never becomes
+        # narrower than 30 seconds for a stable OP/ED across episodes.
+        anomaly_limit = max(30.0, 3.0 * 1.4826 * mad) if mad is not None else None
+        consistency_scale = max(60.0, 2.0 * anomaly_limit) if anomaly_limit is not None else None
+
+        for item in matches:
+            segment = next(
+                record["original"][kind]
+                for record in records
+                if record["episode_id"] == item["episode_id"]
+            )
+            consistency = None
+            anomalous = False
+            if enough_samples and median is not None and anomaly_limit is not None and consistency_scale is not None:
+                deviation = abs(item["start"] - median)
+                anomalous = deviation > anomaly_limit
+                consistency = max(0.0, min(1.0, 1.0 - deviation / consistency_scale))
+            assessed = assess_segment(segment, temporal_consistency=consistency, anomalous=anomalous)
+            assessments[(item["episode_id"], kind)] = (assessed, anomalous)
+
+    with db_session() as conn:
+        for record in records:
+            updated_segments = {}
+            anomaly_flags = {}
+            for kind in ("OP", "ED"):
+                current_segment = record["current"][kind]
+                original_segment = record["original"][kind]
+                assessed, anomalous = assessments.get((record["episode_id"], kind), (None, False))
+                if current_segment is None or (current_segment and current_segment.get("manual_verified")):
+                    anomalous = False
+                if assessed is not None:
+                    if current_segment is not None:
+                        current_segment = {
+                            **current_segment,
+                            "match_confidence_score": assessed.get("match_confidence_score"),
+                            "match_confidence_band": assessed.get("match_confidence_band"),
+                            "temporal_precision_score": assessed.get("temporal_precision_score"),
+                            "temporal_precision_band": assessed.get("temporal_precision_band"),
+                            "confidence_score": assessed.get("confidence_score"),
+                            "confidence_band": assessed.get("confidence_band"),
+                            "temporal_outlier": assessed.get("temporal_outlier", False),
+                            "confidence_factors": assessed.get("confidence_factors"),
+                        }
+                    original_segment = assessed
+                record["original"][kind] = assessed
+                updated_segments[kind] = current_segment
+                anomaly_flags[kind] = anomalous
+            status = episode_review_status(updated_segments["OP"], updated_segments["ED"])
+            conn.execute(
+                "UPDATE analysis_results SET op_json=?,ed_json=?,op_original_json=?,ed_original_json=?,"
+                "is_anomaly_op=?,is_anomaly_ed=?,review_status=?,confidence_version=?,updated_at=? "
+                "WHERE episode_id=?",
+                (
+                    json.dumps(updated_segments["OP"], ensure_ascii=False) if updated_segments["OP"] else None,
+                    json.dumps(updated_segments["ED"], ensure_ascii=False) if updated_segments["ED"] else None,
+                    json.dumps(record["original"]["OP"], ensure_ascii=False) if record["original"]["OP"] else None,
+                    json.dumps(record["original"]["ED"], ensure_ascii=False) if record["original"]["ED"] else None,
+                    int(anomaly_flags["OP"]), int(anomaly_flags["ED"]), status,
+                    CONFIDENCE_MODEL_VERSION, utc_now(), record["episode_id"],
+                ),
+            )
 
 
 def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
@@ -214,18 +395,17 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
     episodes = detail["episodes"]
     if not episodes:
         raise RuntimeError(f"No MKV files were found for '{series_name}'.")
-    update_job(stage="preparing_templates", total_items=len(episodes), progress=0)
+    update_job(stage="preparing_dependencies", current_item="FFmpeg / FFprobe", total_items=len(episodes), progress=0)
     if cancel_event.is_set():
         for index, episode in enumerate(episodes):
             update_job(item_index=index, item_status="cancelled", item_progress=0,
                        current_item=episode["file_name"])
         return {"status": "cancelled", "items": [], "errors": 0, "total": len(episodes)}
 
-    def template_cb(index: int, total: int, name: str) -> None:
+    def template_cb(stage: str, percentage: float, name: str) -> None:
         if cancel_event.is_set():
             raise InterruptedError("Analysis cancellation requested.")
-        update_job(stage="preparing_templates", current_item=name,
-                   progress=min(10.0, index / max(total, 1) * 10))
+        update_job(stage=stage, current_item=name, progress=percentage * 0.2)
 
     try:
         wavs, signature = _get_templates(series_name, selected_slug, template_cb)
@@ -248,12 +428,12 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
         if index in skip_indices:
             items.append({"file_name": path.name, "analysis_status": "SKIPPED", "op": None, "ed": None})
             update_job(item_index=index, item_status="skipped", item_progress=100,
-                       current_item=path.name, progress=(index + 1) / total * 100)
+                       current_item=path.name, progress=20 + (index + 1) / total * 80)
             continue
         episode_id = int(episode["id"])
         update_job(stage="analyzing_episodes", current_item=path.name,
                    item_index=index, item_status="running", item_progress=0,
-                   progress=index / total * 100)
+                   progress=20 + index / total * 80)
         try:
             with db_session() as conn:
                 injection_state = conn.execute(
@@ -269,15 +449,17 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
                 def cb(pct: float) -> None:
                     update_job(stage="analyzing_episodes", current_item=path.name,
                                item_index=index, item_status="running", item_progress=pct,
-                               progress=(index + pct / 100) / total * 100)
+                               progress=20 + (index + pct / 100) / total * 80)
                 op_candidates, ed_candidates = evaluate_episode_templates(path, wavs, plugins, cb, cancel_event)
-                op, ed = _as_record(_best(op_candidates)), _as_record(_best(ed_candidates))
+                op, ed = _best_record(op_candidates), _best_record(ed_candidates)
                 if templates_signature(wavs) != signature:
                     raise RuntimeError("Templates changed during analysis. Run the analysis again.")
                 _persist_analysis(episode_id, path, op, ed, signature, expected_fingerprint=original_fingerprint)
+                op = assess_segment(op)
+                ed = assess_segment(ed)
                 result = {"file_name": path.name, "file_path": str(path), "op": op, "ed": ed,
                           "analysis_status": "NO_MATCH" if not op and not ed else "COMPLETED",
-                          "review_status": "NOT_REQUIRED" if not op and not ed else "PENDING",
+                          "review_status": episode_review_status(op, ed),
                           "injection_status": "NOT_REQUESTED", "is_anomaly_op": False,
                           "is_anomaly_ed": False, "source": "engine", "cached": False}
                 log_event("INFO", "Analysis", "Episode analysis completed." if op or ed else "No OP/ED match found.",
@@ -285,7 +467,7 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
                           job_id=job_id, series_name=series_name, episode_name=path.name)
             items.append(result)
             update_job(item_index=index, item_status="completed", item_progress=100,
-                       item_result=result, current_item=path.name, progress=(index + 1) / total * 100)
+                       item_result=result, current_item=path.name, progress=20 + (index + 1) / total * 80)
         except InterruptedError as exc:
             items.append({"file_name": path.name, "analysis_status": "CANCELLED", "op": None, "ed": None})
             update_job(item_index=index, item_status="cancelled", item_progress=0,
@@ -305,7 +487,7 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
                       series_name=series_name, episode_name=path.name)
             items.append({"file_name": path.name, "analysis_status": "FAILED", "op": None, "ed": None, "error": str(exc)})
             update_job(item_index=index, item_status="failed", item_progress=100,
-                       item_error=str(exc), current_item=path.name, progress=(index + 1) / total * 100)
+                       item_error=str(exc), current_item=path.name, progress=20 + (index + 1) / total * 80)
     _apply_anomalies(series_name)
     if cancel_event.is_set():
         final = "cancelled"

@@ -43,3 +43,8 @@ class ArtworkSearchRequest(BaseModel):
 
 class ArtworkSelection(BaseModel):
     anilist_id: int = Field(gt=0)
+
+
+class BatchInjectionRequest(BaseModel):
+    episode_ids: list[int] = Field(min_length=1, max_length=500)
+    replace_existing_chapters: bool = False

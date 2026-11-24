@@ -37,6 +37,41 @@ def _binary(plugins_path: Path, name: str) -> Path:
 
 COSINE_SIMILARITY_THRESHOLD = 0.68
 
+
+def _peak_width_seconds(
+    correlation: np.ndarray,
+    peak_index: int,
+    sr: int,
+    hop_length: int,
+    relative_level: float = 0.95,
+) -> float | None:
+    """Measure how wide the contiguous top of a correlation peak is.
+
+    Peaks touching the search boundary are censored and cannot provide a
+    reliable width estimate.
+    """
+    values = np.asarray(correlation, dtype=float)
+    if values.ndim != 1 or peak_index < 0 or peak_index >= len(values):
+        return None
+    peak_value = float(values[peak_index])
+    if not np.isfinite(peak_value) or peak_value <= 0:
+        return None
+    if not 0 < relative_level < 1 or sr <= 0 or hop_length <= 0:
+        return None
+
+    threshold = peak_value * relative_level
+    left = peak_index
+    right = peak_index
+    while left > 0 and values[left - 1] >= threshold:
+        left -= 1
+    while right < len(values) - 1 and values[right + 1] >= threshold:
+        right += 1
+
+    if left == 0 or right == len(values) - 1:
+        return None
+    return float((right - left + 1) * hop_length / sr)
+
+
 def prepare_song_templates(
     series_template_dir: Path,
     plugins_path: Path,
@@ -218,8 +253,39 @@ def evaluate_episode_templates(episode_path: Path, wav_templates: list, plugins_
             
             correlation /= chroma_ep.shape[0]
 
+            # Keep the original detector score and matching decision unchanged.
+            # This normalized metric is additional evidence for the confidence
+            # model; it is not used to select or reject a detected segment.
             match_index = np.argmax(correlation)
             max_score = float(correlation[match_index])
+            template_frames = int(chroma_tmpl.shape[1])
+            normalized_correlation = np.clip(
+                correlation * (chroma_ep.shape[0] / max(template_frames, 1)),
+                0.0,
+                1.0,
+            )
+            similarity_score = float(normalized_correlation[match_index])
+
+            # Compare the best peak with the strongest peak outside a two-second
+            # neighborhood. Adjacent frames belong to the same detection peak.
+            exclusion_radius = max(1, int((2.0 * sr) / hop_length))
+            separated_peaks = normalized_correlation.copy()
+            left = max(0, match_index - exclusion_radius)
+            right = min(len(separated_peaks), match_index + exclusion_radius + 1)
+            separated_peaks[left:right] = -np.inf
+            second_peak = float(np.max(separated_peaks)) if len(separated_peaks) else float("-inf")
+            peak_prominence = (
+                float(np.clip(
+                    (similarity_score - second_peak) / max(abs(similarity_score), 1e-8),
+                    0.0,
+                    1.0,
+                ))
+                if np.isfinite(second_peak)
+                else None
+            )
+            peak_width_seconds = _peak_width_seconds(
+                normalized_correlation, match_index, sr, hop_length
+            )
 
             if max_score >= COSINE_SIMILARITY_THRESHOLD:
                 start_time = float(librosa.frames_to_time(match_index, sr=sr, hop_length=hop_length))
@@ -236,7 +302,11 @@ def evaluate_episode_templates(episode_path: Path, wav_templates: list, plugins_
                     "name": tmpl.stem.upper(),
                     "start": start_time,
                     "end": end_time,
-                    "score": max_score
+                    "score": max_score,
+                    "similarity_score": similarity_score,
+                    "peak_prominence": peak_prominence,
+                    "peak_width_seconds": peak_width_seconds,
+                    "template_frames": template_frames,
                 }
                 if is_op:
                     op_candidates.append(candidate)

@@ -12,7 +12,22 @@ def test_sqlite_schema_and_log_storage(tmp_path):
     init_db()
     with db_session() as conn:
         tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"series", "episodes", "analysis_results", "jobs", "job_items", "activity_logs", "migration_history", "schema_migrations"}.issubset(tables)
+        assert {
+            "series", "episodes", "analysis_results", "analysis_segment_history",
+            "jobs", "job_items", "activity_logs", "migration_history", "schema_migrations",
+        }.issubset(tables)
+        analysis_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(analysis_results)").fetchall()
+        }
+        assert {"op_original_json", "ed_original_json", "confidence_version"}.issubset(analysis_columns)
+        migration_versions = {
+            row["version"] for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+        assert {4, 5}.issubset(migration_versions)
+        indexes = {
+            row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+        }
+        assert "idx_one_active_series_operation" in indexes
         conn.execute(
             "INSERT INTO activity_logs(timestamp,level,source,message) VALUES(?,?,?,?)",
             ("2026-01-01T00:00:00+00:00", "INFO", "test", "persisted"),
@@ -80,6 +95,24 @@ def test_only_one_active_series_job_is_allowed(tmp_path):
             ("job-two", "series", "Example Show", "queued", "queued", "2026-01-01T00:00:02+00:00"),
         )
         assert conn.execute("SELECT COUNT(*) FROM jobs WHERE series_name='Example Show'").fetchone()[0] == 2
+    with pytest.raises(sqlite3.IntegrityError):
+        with db_session() as conn:
+            conn.execute(
+                "INSERT INTO jobs(id,kind,series_name,status,stage,created_at) VALUES(?,?,?,?,?,?)",
+                ("injection-conflict", "injection", "example show", "queued", "queued", "2026-01-01T00:00:03+00:00"),
+            )
+    with db_session() as conn:
+        conn.execute("UPDATE jobs SET status='completed' WHERE id='job-two'")
+        conn.execute(
+            "INSERT INTO jobs(id,kind,series_name,status,stage,created_at) VALUES(?,?,?,?,?,?)",
+            ("injection-one", "injection", "Example Show", "queued", "queued", "2026-01-01T00:00:04+00:00"),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        with db_session() as conn:
+            conn.execute(
+                "INSERT INTO jobs(id,kind,series_name,status,stage,created_at) VALUES(?,?,?,?,?,?)",
+                ("analysis-conflict", "series", "Example Show", "running", "running", "2026-01-01T00:00:05+00:00"),
+            )
 
 
 def test_interrupted_jobs_are_not_automatically_resumed(tmp_path):

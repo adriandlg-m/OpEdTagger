@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from backend.api.schemas.models import TemplateSearchRequest, TemplateDownloadRequest
 from backend.services.template_service import search_candidates, download_selected_templates
 from backend.services.log_service import log_event
+from backend.services.plugin_manager import ensure_analysis_plugins
 
 router = APIRouter(prefix="/templates", tags=["Templates"])
 
@@ -16,8 +17,14 @@ def search_templates(body: TemplateSearchRequest):
 @router.post("/download")
 def download_templates(body: TemplateDownloadRequest):
     try:
+        plugin_state = ensure_analysis_plugins()
+        if plugin_state.get("status") not in {"ready", "analysis_ready"}:
+            detail = plugin_state.get("last_error") or plugin_state.get("message") or "FFmpeg/FFprobe are unavailable."
+            raise HTTPException(status_code=503, detail=f"Audio preparation tools are not ready: {detail}")
         result = download_selected_templates(body.series_name.strip(), body.anime_slug.strip())
         log_event("INFO", "Templates", "AnimeThemes templates downloaded.", detail=str(result), series_name=body.series_name)
         return result
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

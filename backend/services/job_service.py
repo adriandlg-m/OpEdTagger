@@ -53,6 +53,34 @@ class JobService:
                 "WHERE injection_status='IN_PROGRESS'",
                 ("The application stopped during MKV injection. Inspect the original file and the backup before attempting another injection.", utc_now()),
             )
+        try:
+            from backend.infrastructure.config import load_config
+            from core.media_tools import reconcile_backup_transactions
+
+            def get_episode_injection_status(episode_id: int):
+                with db_session() as conn:
+                    status_row = conn.execute(
+                        "SELECT injection_status FROM analysis_results WHERE episode_id=?",
+                        (episode_id,),
+                    ).fetchone()
+                return status_row["injection_status"] if status_row else None
+
+            def set_episode_injection_status(episode_id: int, status: str, error: str | None):
+                with db_session() as conn:
+                    conn.execute(
+                        "UPDATE analysis_results SET injection_status=?,error=?,updated_at=? WHERE episode_id=?",
+                        (status, error, utc_now(), episode_id),
+                    )
+
+            recovery_result = reconcile_backup_transactions(
+                Path(load_config()["backup_path"]),
+                get_episode_injection_status,
+                set_episode_injection_status,
+            )
+            if any(recovery_result.values()):
+                log_event("WARNING", "BackupManager", "Interrupted MKV backup transactions reconciled.", detail=str(recovery_result))
+        except Exception:
+            logger.exception("Could not reconcile interrupted MKV backup transactions.")
         for row in rows:
             log_event("WARNING", "JobManager", "A job was marked interrupted during startup recovery.", job_id=row["id"])
 
@@ -64,7 +92,8 @@ class JobService:
             raise ValueError(f"No MKV files found in '{series_name}'.")
         with db_session() as conn:
             existing = conn.execute(
-                "SELECT id FROM jobs WHERE kind='series' AND series_name=? AND status IN ('queued','running') LIMIT 1",
+                "SELECT id FROM jobs WHERE kind IN ('series','injection') AND series_name=? "
+                "AND status IN ('queued','running') LIMIT 1",
                 (series_name,),
             ).fetchone()
             if existing:
@@ -85,6 +114,267 @@ class JobService:
         self._executor.submit(self._run_series, job_id, series_name, event, payload)
         log_event("INFO", "JobManager", "Series analysis job queued.", job_id=job_id, series_name=series_name)
         return self.get_job(job_id) or {"id": job_id, "status": "queued"}
+
+
+    def preview_injection_job(
+        self,
+        series_name: str,
+        episode_ids: list[int],
+        *,
+        replace_existing_chapters: bool = False,
+    ) -> dict:
+        from backend.services.chapter_service import preview_batch_injection
+
+        return preview_batch_injection(
+            series_name,
+            episode_ids,
+            replace_existing_chapters=replace_existing_chapters,
+        )
+
+    def create_injection_job(
+        self,
+        series_name: str,
+        episode_ids: list[int],
+        *,
+        replace_existing_chapters: bool = False,
+    ) -> dict:
+        """Queue a durable, sequential batch chapter-injection job."""
+        selected_ids = list(dict.fromkeys(int(value) for value in episode_ids))
+        if not selected_ids:
+            raise ValueError("Select at least one episode for chapter injection.")
+
+        scan_library()
+        detail = get_series_detail(series_name)
+        episodes_by_id = {
+            int(episode["id"]): episode
+            for episode in detail["episodes"]
+            if episode.get("id") is not None
+        }
+        missing = [episode_id for episode_id in selected_ids if episode_id not in episodes_by_id]
+        if missing:
+            raise ValueError("One or more selected episodes do not belong to this series or are no longer in the library.")
+
+        eligible_states = {"AUTO_APPROVED", "REVIEW_RECOMMENDED", "MANUALLY_REVIEWED", "APPROVED"}
+        for episode_id in selected_ids:
+            episode = episodes_by_id[episode_id]
+            if episode.get("analysis_status") != "COMPLETED" or not (episode.get("op") or episode.get("ed")):
+                raise ValueError(f"{episode['file_name']}: no valid OP/ED detection is available for injection.")
+            if episode.get("review_status") not in eligible_states:
+                raise ValueError(
+                    f"{episode['file_name']}: manual review is still required before injection."
+                )
+            if episode.get("injection_status") in {"SUCCEEDED", "IN_PROGRESS", "RECOVERY_REQUIRED"}:
+                raise ValueError(
+                    f"{episode['file_name']}: it is already injected or requires injection recovery."
+                )
+
+        from core.backup_manager import estimate_sequential_backup_space
+        from backend.infrastructure.config import load_config
+        backup_estimate = estimate_sequential_backup_space(
+            [Path(episodes_by_id[episode_id]["file_path"]) for episode_id in selected_ids],
+            Path(load_config()["backup_path"]),
+        )
+        if not backup_estimate["enough_space"]:
+            raise ValueError(
+                "Insufficient free space for the temporary backup of the largest selected MKV. "
+                f"Required {backup_estimate['required_free_bytes'] / (1024 ** 3):.2f} GiB; "
+                f"available {backup_estimate['available_free_bytes'] / (1024 ** 3):.2f} GiB."
+            )
+
+        with db_session() as conn:
+            active = conn.execute(
+                "SELECT id,kind FROM jobs WHERE lower(series_name)=lower(?) "
+                "AND kind IN ('series','injection') AND status IN ('queued','running') LIMIT 1",
+                (series_name,),
+            ).fetchone()
+            if active:
+                raise RuntimeError(
+                    f"Another {active['kind']} job is already active for '{series_name}' ({active['id']})."
+                )
+            job_id = uuid.uuid4().hex[:12]
+            now = utc_now()
+            payload = {
+                "episode_ids": selected_ids,
+                "replace_existing_chapters": bool(replace_existing_chapters),
+            }
+            conn.execute(
+                "INSERT INTO jobs(id,kind,series_name,status,stage,progress,total_items,payload_json,created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (job_id, "injection", series_name, "queued", "queued", 0.0,
+                 len(selected_ids), json.dumps(payload), now),
+            )
+            for episode_id in selected_ids:
+                episode = episodes_by_id[episode_id]
+                conn.execute(
+                    "INSERT INTO job_items(job_id,episode_id,item_key,file_name,status,progress) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (job_id, episode_id, episode["file_path"], episode["file_name"], "queued", 0.0),
+                )
+
+        event = threading.Event()
+        with self._lock:
+            self._cancel[job_id] = event
+        self._executor.submit(
+            self._run_injection_batch,
+            job_id,
+            series_name,
+            event,
+            payload,
+        )
+        log_event(
+            "INFO",
+            "JobManager",
+            "Batch chapter injection queued.",
+            detail=f"{len(selected_ids)} episodes selected.",
+            job_id=job_id,
+            series_name=series_name,
+        )
+        return self.get_job(job_id) or {"id": job_id, "status": "queued"}
+
+    def _run_injection_batch(self, job_id: str, series_name: str,
+                             event: threading.Event, payload: dict) -> None:
+        from backend.services.chapter_service import inject_episode_chapters
+
+        episode_ids = payload.get("episode_ids") or []
+        replace_existing = bool(payload.get("replace_existing_chapters"))
+        total = max(len(episode_ids), 1)
+        completed = 0
+        errors = 0
+        processed = 0
+        try:
+            self._update(
+                job_id,
+                status="running",
+                stage="injecting_chapters",
+                started_at=utc_now(),
+                total_items=len(episode_ids),
+            )
+            detail = get_series_detail(series_name)
+            episodes_by_id = {
+                int(episode["id"]): episode
+                for episode in detail["episodes"]
+                if episode.get("id") is not None
+            }
+
+            for index, episode_id in enumerate(episode_ids):
+                episode = episodes_by_id.get(int(episode_id))
+                if episode is None:
+                    errors += 1
+                    processed += 1
+                    with db_session() as conn:
+                        missing_item = conn.execute(
+                            "SELECT item_key,file_name FROM job_items WHERE job_id=? AND episode_id=?",
+                            (job_id, int(episode_id)),
+                        ).fetchone()
+                    if missing_item:
+                        self._update_item(
+                            job_id,
+                            missing_item["item_key"],
+                            item_status="failed",
+                            item_progress=100,
+                            item_error="The episode file was removed or moved after batch selection.",
+                            item_result={
+                                "episode_id": int(episode_id),
+                                "file_name": missing_item["file_name"],
+                                "error": "The episode file was removed or moved after batch selection.",
+                            },
+                        )
+                    continue
+                item_key = episode["file_path"]
+                file_name = episode["file_name"]
+                if event.is_set():
+                    for remaining_id in episode_ids[index:]:
+                        remaining = episodes_by_id.get(int(remaining_id))
+                        if remaining:
+                            self._update_item(
+                                job_id,
+                                remaining["file_path"],
+                                item_status="cancelled",
+                                item_progress=0,
+                                item_error="Batch injection cancelled before this episode started.",
+                            )
+                    break
+
+                self._update(
+                    job_id,
+                    stage="injecting_chapters",
+                    current_item=file_name,
+                    progress=(index / total) * 100,
+                )
+                self._update_item(job_id, item_key, item_status="running", item_progress=0)
+                try:
+                    result = inject_episode_chapters(
+                        int(episode_id),
+                        replace_existing_chapters=replace_existing,
+                    )
+                except Exception as exc:
+                    errors += 1
+                    logger.exception("Batch injection failed for %s", file_name)
+                    self._update_item(
+                        job_id,
+                        item_key,
+                        item_status="failed",
+                        item_progress=100,
+                        item_error=str(exc),
+                        item_result={"episode_id": episode_id, "file_name": file_name, "error": str(exc)},
+                    )
+                else:
+                    completed += 1
+                    self._update_item(
+                        job_id,
+                        item_key,
+                        item_status="completed",
+                        item_progress=100,
+                        item_result=result,
+                    )
+                processed += 1
+                self._update(
+                    job_id,
+                    stage="injecting_chapters",
+                    current_item=file_name,
+                    progress=(processed / total) * 100,
+                )
+
+            if event.is_set():
+                final_status = "cancelled"
+            elif errors and completed:
+                final_status = "completed_with_errors"
+            elif errors:
+                final_status = "failed"
+            else:
+                final_status = "completed"
+            self._update(
+                job_id,
+                status=final_status,
+                stage=final_status,
+                progress=100 if not event.is_set() else (processed / total) * 100,
+                finished_at=utc_now(),
+            )
+            log_event(
+                "INFO" if not errors else "WARNING",
+                "JobManager",
+                f"Batch chapter injection {final_status}.",
+                detail=f"{completed} succeeded; {errors} failed; {len(episode_ids)} selected.",
+                job_id=job_id,
+                series_name=series_name,
+            )
+        except Exception as exc:
+            logger.exception("Batch injection job %s failed", job_id)
+            self._update(
+                job_id,
+                status="failed",
+                stage="failed",
+                error=str(exc),
+                finished_at=utc_now(),
+            )
+            log_event(
+                "ERROR", "JobManager", "Batch chapter injection job failed.",
+                detail=str(exc), job_id=job_id, series_name=series_name,
+            )
+        finally:
+            with self._lock:
+                self._cancel.pop(job_id, None)
+
 
     def create_individual_job(self, staged_path: Path, series_name: str, selected_slug: str | None = None) -> dict:
         if not staged_path.exists() or staged_path.suffix.lower() != ".mkv":
@@ -180,11 +470,15 @@ class JobService:
                     conn.execute("UPDATE job_items SET status='cancelled' WHERE job_id=?", (job_id,))
                 self._update(job_id, status="cancelled", stage="cancelled", finished_at=utc_now())
                 return
-            def template_progress(index: int, total: int, name: str) -> None:
+            def template_progress(stage: str, percentage: float, name: str) -> None:
                 if event.is_set():
                     raise InterruptedError("Analysis cancellation requested.")
-                self._update(job_id, stage="preparing_templates", current_item=name,
-                             progress=min(20.0, index / max(total, 1) * 20))
+                self._update(
+                    job_id,
+                    stage=stage,
+                    current_item=name,
+                    progress=percentage * 0.2,
+                )
             def episode_progress(pct: float) -> None:
                 self._update(job_id, stage="analyzing", progress=20 + pct * 0.8, current_item=staged_path.name)
             result = analyze_path(staged_path, series_name, selected_slug=selected_slug,

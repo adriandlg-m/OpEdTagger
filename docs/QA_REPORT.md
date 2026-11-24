@@ -1,6 +1,6 @@
 # Informe de validación técnica
 
-**Versión:** 1.5.0-anilist-series-metadata  
+**Versión:** 1.5.2-recover-cli-workflows  
 **Ámbito:** revisión estática, pruebas unitarias y pruebas de API locales en el entorno de construcción.
 
 ## Comprobaciones realizadas
@@ -8,9 +8,11 @@
 | Comprobación | Resultado |
 |---|---|
 | `python -m compileall -q backend core scripts` | Correcto |
-| `PYTHONPATH=. pytest -q` | 60 pruebas aprobadas en la validación final de este paquete |
+| `PYTHONPATH=. pytest -q` | **97 pruebas aprobadas**, 1 warning, GitHub Actions (Python 3.12, Ubuntu) |
 | TypeScript Compiler API parser sobre JS/JSX/TS del frontend | 17 archivos analizados sin errores de sintaxis |
-| Jerarquía recursiva de carpetas de usuario | Verificada con carpetas multinivel y archivos en raíz |
+| Navegación jerárquica serie → carpeta → episodio | UI con carpetas contraídas, contenido directo por nivel, estado y navegación anterior/siguiente en el espacio de episodio; build Vite aprobado, validación visual Windows pendiente |
+| Refinamiento de legibilidad y revisión | Tipografía de Series Detail ampliada, estados técnicos traducidos, contraste del selector nativo adaptado al tema, botones jerarquizados, columnas ocultas en el nivel raíz, carátula disponible solo en la vista principal y factores técnicos plegados en la vista de episodio |
+| Edición manual de timestamps | Entradas MM:SS.mmm / HH:MM:SS.mmm, punto o coma decimal, conversión a segundos y pruebas unitarias de formato/validación |
 | Toast fijo y Dashboard con scroll interno | Revisados estáticamente; prueba visual pendiente en Windows |
 | AniList public GraphQL API (sin token) y búsqueda de anime | Cubiertos con respuestas simuladas; una consulta externa real queda pendiente de la prueba en Windows |
 | Configuración de AniList | No hay token, API key ni credenciales que configurar |
@@ -18,9 +20,14 @@
 | Atribución AniList | Aviso de fuente incluido en el modal y documentación; revisar requisitos vigentes de marca/atribución antes de una distribución pública |
 | Scroll del árbol de episodios | Se separó el viewport de scroll del contenido flex; prueba visual pendiente en Windows |
 | API local con FastAPI TestClient | Health, dashboard, settings y logs responden correctamente |
+| Frontend `npm ci` | Correcto en GitHub Actions (Node.js 22) |
+| Frontend `npm test` | Correcto en GitHub Actions |
+| Frontend `npm run build` | Correcto en GitHub Actions (Vite) |
+| Contrato del detector OP/ED | Se conserva `0.68`, el criterio de selección del ganador y el score bruto; se añadieron métricas auxiliares normalizadas sin modificar la aceptación de candidatos |
+| Migración de rutas, gestor de plugins y estructura de plantillas | Pruebas unitarias aprobadas en la suite de 94 pruebas |
 | Esquema SQLite y persistencia | Verificado mediante pruebas |
 | Migración JSON dry-run / apply / idempotencia | Verificada con fixture aislado |
-| Restricción de trabajos duplicados por serie | Verificada en SQLite |
+| Exclusión mutua entre análisis e inyección por serie | Verificada mediante índice único de SQLite y migración v5 |
 | Recuperación de trabajos interrumpidos | Verificada sin reanudación automática |
 | Reconciliación de archivos/series eliminados del catálogo | Verificada con fixtures; solo elimina filas SQLite |
 | Limpieza de cargas individuales interrumpidas | Verificada con validación de ruta |
@@ -29,18 +36,43 @@
 | Recuento de migración con registros preexistentes | Verificado sin sobrecontar |
 | Fingerprint y detección de cambios en archivos | Verificado con fixtures |
 | Validación de timestamps y XML de capítulos | Verificada |
-| Restauración del backup tras fallo de verificación | Verificada con sustitución simulada de herramientas externas |
+| Respaldo transaccional temporal y restauración | Éxito/limpieza, fallo de verificación, fallo de restauración con conservación en recovery, espacio insuficiente y reconciliación de cierre inesperado |
 | Recuperación del directorio staging de templates | Verificada con fixtures |
 | Conversión WAV y cache invalidation al cambiar/eliminar videos fuente | Verificada con fixtures |
 | Verificación exacta de capítulos por cantidad, títulos y tiempos | Verificada con FFprobe real sobre un MKV sintético; además se probó el rollback simulado |
 | Persistencia y presentación de fallos por episodio | Verificada con fixture aislado |
 | Protección de rutas y symlinks | Verificada con fixtures |
+| Índices independientes 0–100 de confianza de coincidencia y precisión temporal OP/ED | Pruebas de ambas dimensiones, umbrales, métricas ausentes, anomalías sin penalización artificial y agregación de revisión |
+| Snapshot original e historial de correcciones/retiradas | Migración SQLite y prueba de persistencia manual |
+| Cola de revisión y selección de episodios elegibles | Frontend tests/build; validación visual Windows pendiente |
+| Inyección masiva secuencial y preflight de espacio | Estimación por el MKV más grande, reserva mínima y bloqueo por espacio insuficiente; validación real en Windows pendiente |
+| Previsualización del lote antes de confirmar | Frontend tests y build aprobados; verificación visual en Windows pendiente |
 
 Las pruebas se ejecutaron en el entorno Python disponible durante la construcción. La configuración de Windows indicada en `setup_windows.bat` todavía debe validarse en un equipo Windows real.
 
+
+## Validación añadida para la recuperación de funcionalidades CLI
+
+La rama `feature/recover-cli-workflows` incorpora nuevas pruebas para:
+
+- Los valores predeterminados de `templates/` y `plugins/` bajo la raíz del proyecto, incluida la normalización no destructiva de instalaciones que ya usaban `Templates/`.
+- La migración no destructiva desde las carpetas anteriores de AppData y desde el directorio `template/` del CLI.
+- La sincronización automática de todos los resultados AnimeThemes que coinciden como en el CLI (y fallback a todos los resultados cuando no hay coincidencia), caché de vídeos por URL y conservación de WAV manuales/manifiestos.
+- La validación de WAV legibles antes de iniciar el detector y el orden de preparación: dependencias, sincronización, conversión WAV y análisis.
+- El endpoint y esquema GraphQL actuales de AnimeThemes, variables de búsqueda/detalle, mapeo de `animethemes`/`animethemeentries` y manejo de cancelación.
+- El reporte de progreso por Opening/Ending y bytes transferidos, barra indeterminada durante consultas/tamaños desconocidos y progreso monotónico entre preparación y análisis.
+- La descarga de FFmpeg/FFprobe en segundo plano y la instalación diferida de MKVToolNix al inyectar capítulos.
+- La protección del contrato de detección OP/ED (`0.68`, 22.050 Hz, chroma, correlación, filtro ED del 70 %) y la medición adicional de anchura del pico de alineación, sin alterar la aceptación ni la selección del ganador.
+- Dos índices heurísticos independientes: confianza de coincidencia (similitud y margen de template) y precisión temporal estimada (anchura del pico al 95 % y distinción frente a otras posiciones). La consistencia entre episodios y las anomalías se muestran como contexto; ya no fuerzan un techo numérico.
+- La extracción segura de ZIP y la recuperación de carpetas de plugins tras una interrupción.
+- Los nombres de capítulos históricos y el idioma `spa/es`, manteniendo backup, verificación y rollback.
+
+**Estado de esta rama:** GitHub Actions completó correctamente `compileall`, `pytest` (**110 pruebas aprobadas, 1 warning**), `npm test` (**11 pruebas aprobadas**) y `npm run build`. La suite incluye el ciclo de respaldo temporal, restauración, reconciliación de interrupciones, estimación de espacio y recuperación desde Settings. La instalación real de herramientas, consultas/descargas externas de AnimeThemes, conversión FFmpeg, inyección con MKV representativos e inspección visual siguen pendientes de validación en Windows. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales, la inyección masiva sobre MKV representativos y la inspección visual se deben validar además en Windows.
+
+
 ## Comprobaciones pendientes
 
-- No se completó `npm ci` ni `vite build` en este entorno: `npm ci --offline` no pudo recuperar paquetes que no están en la caché local. Se intentó reutilizar el `node_modules` incluido en el ZIP de referencia, pero contiene dependencias nativas de Windows y no incluye el binario opcional de Rollup para Linux. El ZIP incluye `package-lock.json`; `setup_windows.ps1` ejecutará `npm ci` y `npm run build` en el equipo Windows de destino.
+- La instalación de dependencias del frontend y el build Vite pasaron en CI Linux. Queda pendiente validar el setup completo sobre el equipo Windows de destino.
 - No se realizaron solicitudes reales a AnimeThemes ni descargas externas de templates.
 - No se ejecutó FFmpeg/FFprobe/MKVToolNix contra archivos multimedia reales.
 - La restauración del backup ante fallo se probó con una simulación de los ejecutables, no con una modificación real de MKV.
@@ -155,3 +187,12 @@ La validación de esta iteración se registra en el paquete entregado. El build 
 - Si la carga falla, se muestra el error de la serie solicitada con acciones para reintentar o volver al Dashboard.
 - Pruebas Python: 60 aprobadas. Pruebas de secuencia frontend con Node `node:test`: 3 aprobadas. TypeScript Compiler API: 20 archivos JS/JSX/TS analizados sin errores de sintaxis. CSS: 5 hojas analizadas sin errores.
 - El build Vite no se ejecutó en este entorno porque las dependencias npm no están instaladas localmente. Debe validarse en Windows con `npm.cmd run build` dentro de `frontend`.
+
+
+## Política de respaldos MKV
+
+- La ubicación predeterminada es `<project_root>/backups/` cuando la raíz permite escritura; las instalaciones protegidas utilizan AppData. Los respaldos antiguos no vacíos de AppData permanecen donde estaban.
+- La estructura separa `temporary/`, `recovery/` y `chapters/`; `backups/` está excluido de Git.
+- El preflight informa tamaño total, archivo más grande y espacio libre/requerido. La estimación secuencial usa el archivo más grande más una reserva de 1 % (mínimo 256 MiB), con comprobación inmediata antes de cada copia.
+- La copia completa se elimina después de que FFprobe verifica capítulos y SQLite confirma `SUCCEEDED`. Cuando existían capítulos previos, su XML se conserva de forma independiente.
+- Si la restauración falla, el respaldo íntegro se conserva en Recovery; Settings muestra los archivos pendientes y permite abrir esa carpeta.
