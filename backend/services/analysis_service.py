@@ -275,7 +275,7 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
     def template_cb(stage: str, percentage: float, name: str) -> None:
         if cancel_event.is_set():
             raise InterruptedError("Analysis cancellation requested.")
-        update_job(stage=stage, current_item=name, progress=percentage)
+        update_job(stage=stage, current_item=name, progress=percentage * 0.2)
 
     try:
         wavs, signature = _get_templates(series_name, selected_slug, template_cb)
@@ -298,12 +298,12 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
         if index in skip_indices:
             items.append({"file_name": path.name, "analysis_status": "SKIPPED", "op": None, "ed": None})
             update_job(item_index=index, item_status="skipped", item_progress=100,
-                       current_item=path.name, progress=(index + 1) / total * 100)
+                       current_item=path.name, progress=20 + (index + 1) / total * 80)
             continue
         episode_id = int(episode["id"])
         update_job(stage="analyzing_episodes", current_item=path.name,
                    item_index=index, item_status="running", item_progress=0,
-                   progress=index / total * 100)
+                   progress=20 + index / total * 80)
         try:
             with db_session() as conn:
                 injection_state = conn.execute(
@@ -319,7 +319,7 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
                 def cb(pct: float) -> None:
                     update_job(stage="analyzing_episodes", current_item=path.name,
                                item_index=index, item_status="running", item_progress=pct,
-                               progress=(index + pct / 100) / total * 100)
+                               progress=20 + (index + pct / 100) / total * 80)
                 op_candidates, ed_candidates = evaluate_episode_templates(path, wavs, plugins, cb, cancel_event)
                 op, ed = _as_record(_best(op_candidates)), _as_record(_best(ed_candidates))
                 if templates_signature(wavs) != signature:
