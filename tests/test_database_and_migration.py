@@ -23,7 +23,11 @@ def test_sqlite_schema_and_log_storage(tmp_path):
         migration_versions = {
             row["version"] for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
         }
-        assert 4 in migration_versions
+        assert {4, 5}.issubset(migration_versions)
+        indexes = {
+            row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+        }
+        assert "idx_one_active_series_operation" in indexes
         conn.execute(
             "INSERT INTO activity_logs(timestamp,level,source,message) VALUES(?,?,?,?)",
             ("2026-01-01T00:00:00+00:00", "INFO", "test", "persisted"),

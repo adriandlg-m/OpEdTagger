@@ -205,6 +205,24 @@ class JobService:
                 if episode is None:
                     errors += 1
                     processed += 1
+                    with db_session() as conn:
+                        missing_item = conn.execute(
+                            "SELECT item_key,file_name FROM job_items WHERE job_id=? AND episode_id=?",
+                            (job_id, int(episode_id)),
+                        ).fetchone()
+                    if missing_item:
+                        self._update_item(
+                            job_id,
+                            missing_item["item_key"],
+                            item_status="failed",
+                            item_progress=100,
+                            item_error="The episode file was removed or moved after batch selection.",
+                            item_result={
+                                "episode_id": int(episode_id),
+                                "file_name": missing_item["file_name"],
+                                "error": "The episode file was removed or moved after batch selection.",
+                            },
+                        )
                     continue
                 item_key = episode["file_path"]
                 file_name = episode["file_name"]

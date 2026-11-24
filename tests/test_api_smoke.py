@@ -204,6 +204,7 @@ def test_manual_correction_preserves_original_detection_and_records_history(tmp_
             ),
         )
 
+    monkeypatch.setattr(chapters, "resolve_library_path", lambda: library.resolve())
     monkeypatch.setattr(chapters, "get_mkv_duration", lambda *_args: 120.0)
 
     with TestClient(app) as client:

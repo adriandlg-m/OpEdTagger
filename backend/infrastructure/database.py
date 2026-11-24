@@ -288,6 +288,22 @@ def init_db() -> None:
                 (4, "Per-segment confidence, immutable analysis snapshots and review history", utc_now()),
             )
 
+        operation_lock_migration_done = conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE version=5"
+        ).fetchone()
+        if not operation_lock_migration_done:
+            # Enforce one active analysis OR injection operation per series even
+            # when two API requests race between their application-level checks.
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_series_operation "
+                "ON jobs(lower(series_name)) "
+                "WHERE kind IN ('series','injection') AND status IN ('queued','running')"
+            )
+            conn.execute(
+                "INSERT INTO schema_migrations(version,description,applied_at) VALUES(?,?,?)",
+                (5, "Serialize active analysis and chapter-injection jobs per series", utc_now()),
+            )
+
 
 def utc_now() -> str:
     from datetime import datetime, timezone
