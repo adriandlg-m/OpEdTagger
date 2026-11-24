@@ -41,6 +41,10 @@ export const api = {
   },
   settings: () => request('/settings'),
   saveSettings: (payload) => request('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  backupSummary: () => request('/settings/backups'),
+  openBackupsFolder: (section = 'root') => request('/settings/backups/open', {
+    method: 'POST', body: JSON.stringify({ section }),
+  }),
   preferences: () => request('/settings/preferences'),
   savePreferences: (payload) => request('/settings/preferences', { method: 'PUT', body: JSON.stringify(payload) }),
   searchAnimeArtwork: (seriesName, query = '') => request('/artwork/search', {
@@ -73,6 +77,13 @@ export const api = {
   injectChapters: (id, replaceExisting) => request(`/episodes/${id}/inject`, {
     method: 'POST', body: JSON.stringify({ confirm: true, replace_existing_chapters: replaceExisting }),
   }),
+  previewBatchInjection: (seriesName, episodeIds, replaceExisting = false) => request(
+    `/jobs/series/${encodeURIComponent(seriesName)}/inject/preflight`,
+    { method: 'POST', body: JSON.stringify({
+      episode_ids: episodeIds,
+      replace_existing_chapters: Boolean(replaceExisting),
+    }) },
+  ),
   startBatchInjection: (seriesName, episodeIds, replaceExisting) => request(
     `/jobs/series/${encodeURIComponent(seriesName)}/inject`,
     { method: 'POST', body: JSON.stringify({

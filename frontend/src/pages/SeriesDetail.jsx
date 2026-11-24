@@ -74,6 +74,15 @@ function ConfidenceSummaryGroup({ label, counts }) {
   );
 }
 
+function formatStorageBytes(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const amount = bytes / (1024 ** index);
+  return `${amount.toLocaleString('es-ES', { maximumFractionDigits: 1 })} ${units[index]}`;
+}
+
 function ConfidenceMetric({ label, score, band, detail }) {
   return (
     <div className={`confidence-metric confidence-${String(band || 'UNASSESSED').toLowerCase()}`}>
@@ -560,6 +569,8 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   const [bannerFailed, setBannerFailed] = useState(false);
   const [selectedEpisodeIds, setSelectedEpisodeIds] = useState(() => new Set());
   const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [batchPreflightLoading, setBatchPreflightLoading] = useState(false);
+  const [batchPreflight, setBatchPreflight] = useState(null);
   const [batchPreviewOpen, setBatchPreviewOpen] = useState(false);
   const [replaceExistingChapters, setReplaceExistingChapters] = useState(false);
   const [activeFolderPath, setActiveFolderPath] = useState(null);
@@ -874,10 +885,20 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     });
   };
 
-  const startBatchInjection = () => {
-    if (selectedEligibleEpisodes.length && !batchSubmitting && !active) {
-      setReplaceExistingChapters(false);
+  const startBatchInjection = async () => {
+    if (!selectedEligibleEpisodes.length || batchSubmitting || batchPreflightLoading || active) return;
+    const ids = selectedEligibleEpisodes.map((episode) => episode.id);
+    setBatchPreflightLoading(true);
+    setBatchPreflight(null);
+    setReplaceExistingChapters(false);
+    try {
+      const preflight = await api.previewBatchInjection(series.name, ids, false);
+      setBatchPreflight(preflight);
       setBatchPreviewOpen(true);
+    } catch (error) {
+      onToast(error.message || 'No se pudo comprobar el espacio de respaldo.', 'error');
+    } finally {
+      setBatchPreflightLoading(false);
     }
   };
 
@@ -958,7 +979,40 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
                 <span><strong>{selectedEligibleEpisodes.filter((episode) => episode.op).length}</strong> detecciones Opening</span>
                 <span><strong>{selectedEligibleEpisodes.filter((episode) => episode.ed).length}</strong> detecciones Ending</span>
                 <span><strong>{selectedEligibleEpisodes.length}</strong> MKV seleccionados</span>
+                {batchPreflight && <span><strong>{formatStorageBytes(batchPreflight.selected_bytes)}</strong> tamaño total</span>}
               </div>
+              {batchPreflight && (
+                <section className={`batch-backup-preflight ${batchPreflight.enough_space ? 'is-ready' : 'is-blocked'}`} aria-live="polite">
+                  <div className="batch-backup-preflight-heading">
+                    <div>
+                      <strong>Respaldo temporal</strong>
+                      <span>Una copia completa a la vez; se elimina tras verificar la inyección.</span>
+                    </div>
+                    <StatusBadge status={batchPreflight.enough_space ? 'Espacio suficiente' : 'Espacio insuficiente'} compact />
+                  </div>
+                  <div className="batch-backup-preflight-stats">
+                    <span>Mayor MKV <strong>{formatStorageBytes(batchPreflight.largest_file_bytes)}</strong></span>
+                    <span>Espacio requerido <strong>{formatStorageBytes(batchPreflight.required_free_bytes)}</strong></span>
+                    <span>Disponible <strong>{formatStorageBytes(batchPreflight.available_free_bytes)}</strong></span>
+                  </div>
+                  <div className="batch-backup-preflight-path" title={batchPreflight.backup_path}>
+                    Respaldo en: {batchPreflight.backup_path}
+                  </div>
+                  {batchPreflight.existing_chapters_count > 0 && (
+                    <p className="batch-backup-preflight-warning">
+                      {batchPreflight.existing_chapters_count} MKV ya contienen capítulos.
+                      {replaceExistingChapters
+                        ? ' Se reemplazarán después de confirmar.'
+                        : ' No se modificarán y se registrarán como incidencias.'}
+                    </p>
+                  )}
+                  {!batchPreflight.enough_space && (
+                    <p className="batch-backup-preflight-error" role="alert">
+                      No hay espacio suficiente en la unidad de respaldo. Libera espacio o cambia la ubicación en Settings antes de continuar.
+                    </p>
+                  )}
+                </section>
+              )}
               <div className="batch-injection-preview-list" aria-label="Timestamps seleccionados para la inyección">
                 {selectedEligibleEpisodes.map((episode) => (
                   <article className="batch-injection-preview-row" key={episode.id}>
@@ -984,12 +1038,13 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
                     disabled={batchSubmitting}
                   />
                   <strong>Reemplazar capítulos existentes</strong> en los MKV que ya contengan capítulos
+                  <Info size={14} title="Sustituye únicamente la estructura de capítulos existente. Las pistas de vídeo, audio y subtítulos no se recodifican ni se reconstruyen." aria-label="Información sobre reemplazo de capítulos" />
                 </label>
-                <p>Se creará una copia de seguridad independiente para cada archivo. Después de escribir, OpEdTagger verificará cantidad, títulos y tiempos con FFprobe. Si no marcas esta opción, los archivos que ya tengan capítulos se registrarán como fallidos y no se modificarán.</p>
+                <p>OpEdTagger conserva el MKV completo solo durante la operación. Tras verificar los capítulos y guardar el resultado, elimina esa copia. Si la restauración falla o la aplicación se interrumpe durante la escritura, el respaldo se conserva en Recuperación. Las copias de capítulos anteriores, cuando existen, son XML ligeros.</p>
               </div>
               <footer className="batch-injection-modal-footer">
                 <button className="button button-ghost" type="button" onClick={() => setBatchPreviewOpen(false)} disabled={batchSubmitting}>Volver</button>
-                <button className="button button-primary" type="button" onClick={confirmBatchInjection} disabled={batchSubmitting || !selectedEligibleEpisodes.length}>
+                <button className="button button-primary" type="button" onClick={confirmBatchInjection} disabled={batchSubmitting || !selectedEligibleEpisodes.length || !batchPreflight?.enough_space}>
                   {batchSubmitting ? 'Preparando trabajo…' : `Confirmar e inyectar ${selectedEligibleEpisodes.length} episodios`}
                 </button>
               </footer>

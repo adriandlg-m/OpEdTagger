@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react';
-import { Check, Database, ExternalLink, Folder, FolderOpen, HardDrive, Info, Moon, RefreshCw, ShieldCheck, SlidersHorizontal, Sun } from 'lucide-react';
+import { AlertTriangle, Check, Database, ExternalLink, Folder, FolderOpen, HardDrive, Info, Moon, RefreshCw, ShieldCheck, SlidersHorizontal, Sun } from 'lucide-react';
 import PageHeader from '../components/PageHeader.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 import { api } from '../api/client.js';
 import '../styles/settings.css';
+
+function formatStorageBytes(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / (1024 ** index)).toLocaleString('es-ES', { maximumFractionDigits: 1 })} ${units[index]}`;
+}
 
 export default function Settings({ theme, onThemeChange, settings, preferences, onSaveSettings, onSavePreferences, onToast, onScanLibrary }) {
   const [path, setPath] = useState(settings?.library_path || '');
@@ -17,6 +25,9 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
   const [pluginManager, setPluginManager] = useState(null);
   const [saving, setSaving] = useState(false);
   const [browsingLibrary, setBrowsingLibrary] = useState(false);
+  const [backupSummary, setBackupSummary] = useState(null);
+  const [backupSummaryLoading, setBackupSummaryLoading] = useState(false);
+  const [openingBackupFolder, setOpeningBackupFolder] = useState('');
 
   useEffect(() => {
     setPath(settings?.library_path || '');
@@ -41,6 +52,28 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
     return () => { mounted = false; };
   }, []);
 
+  const refreshBackupSummary = async () => {
+    setBackupSummaryLoading(true);
+    try {
+      const result = await api.backupSummary();
+      setBackupSummary(result);
+    } catch (error) {
+      onToast(error.message || 'No se pudo consultar el almacenamiento de respaldos.', 'error');
+    } finally {
+      setBackupSummaryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    api.backupSummary().then((result) => {
+      if (mounted) setBackupSummary(result);
+    }).catch(() => {
+      if (mounted) setBackupSummary(null);
+    });
+    return () => { mounted = false; };
+  }, [settings?.backup_path]);
+
   const browseLibrary = async () => {
     setBrowsingLibrary(true);
     try {
@@ -61,6 +94,7 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
     setSaving(true);
     try {
       await onSaveSettings({ library_path: path.trim(), template_path: templatePath.trim(), plugins_path: pluginsPath.trim(), backup_path: backupPath.trim() });
+      await refreshBackupSummary();
     } catch (error) { onToast(error.message, 'error'); }
     finally { setSaving(false); }
   };
@@ -71,6 +105,18 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
     // a redundant "Preferences saved" toast.
     try { await onSavePreferences({ confirm_injection: confirmInjection, show_outliers: showOutliers, log_refresh: logRefresh }); }
     catch (error) { onToast(error.message, 'error'); }
+  };
+
+  const openBackupFolder = async (section = 'root') => {
+    setOpeningBackupFolder(section);
+    try {
+      await api.openBackupsFolder(section);
+      onToast('Carpeta de respaldos abierta.', 'success');
+    } catch (error) {
+      onToast(error.message || 'No se pudo abrir la carpeta de respaldos.', 'error');
+    } finally {
+      setOpeningBackupFolder('');
+    }
   };
 
   const toolStatus = (name) => tools?.[name]?.available ? 'Listo' : 'Pendiente';
@@ -103,6 +149,45 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
           <div className="settings-section">
             <label className="settings-label" htmlFor="backup-path">Copias de seguridad de MKV</label>
             <div className="settings-path-control"><div className="settings-path-input-wrap"><Folder size={16} /><input id="backup-path" type="text" value={backupPath} onChange={(e) => setBackupPath(e.target.value)} spellCheck={false} /></div></div>
+            <div className="settings-backup-summary">
+              <div className="settings-backup-summary-heading">
+                <div>
+                  <strong>Almacenamiento de respaldos</strong>
+                  <span>{backupSummary?.backup_path || backupPath || 'Calculando ubicación…'}</span>
+                </div>
+                <button type="button" className="button button-secondary button-small"
+                  onClick={() => openBackupFolder('root')} disabled={openingBackupFolder !== ''}>
+                  <FolderOpen size={14} /> {openingBackupFolder === 'root' ? 'Abriendo…' : 'Abrir carpeta'}
+                </button>
+              </div>
+              <div className="settings-backup-stats">
+                <div><strong>{backupSummaryLoading ? '…' : formatStorageBytes(backupSummary?.available_free_bytes)}</strong><span>Espacio libre</span></div>
+                <div><strong>{backupSummary?.recovery_count ?? '—'}</strong><span>Recuperaciones pendientes</span></div>
+                <div><strong>{backupSummary?.chapter_archive_count ?? '—'}</strong><span>Historiales XML</span></div>
+              </div>
+              {backupSummary?.recovery_count > 0 && (
+                <div className="settings-backup-recovery" role="alert">
+                  <div><AlertTriangle size={14} /><strong>{backupSummary.recovery_count} respaldo(s) requieren inspección · {formatStorageBytes(backupSummary.recovery_bytes)}</strong></div>
+                  <span>Estos MKV no deben volver a inyectarse hasta resolver la recuperación.</span>
+                  <button type="button" className="button button-secondary button-small"
+                    onClick={() => openBackupFolder('recovery')} disabled={openingBackupFolder !== ''}>
+                    Abrir recuperación
+                  </button>
+                  <ul>
+                    {backupSummary.recovery_items.slice(0, 3).map((item) => (
+                      <li key={item.transaction_id}>{item.file_name} · {formatStorageBytes(item.backup_bytes)}</li>
+                    ))}
+                    {backupSummary.recovery_count > 3 && <li>Y {backupSummary.recovery_count - 3} más…</li>}
+                  </ul>
+                </div>
+              )}
+              {backupSummary && backupSummary.temporary_count > 0 && (
+                <p className="settings-backup-note">
+                  Hay {backupSummary.temporary_count} transacción(es) temporal(es) pendientes de limpieza ({formatStorageBytes(backupSummary.temporary_bytes)}).
+                </p>
+              )}
+              <div className="settings-field-hint"><Info size={13} /><span>La copia completa solo existe durante la inyección. Tras verificar y guardar el resultado se elimina; si la restauración falla, queda en Recuperación.</span></div>
+            </div>
           </div>
           <div className="settings-card-footer"><span>La ruta de biblioteca debe existir antes de guardarse.</span><button type="button" className="button button-primary settings-save-button" onClick={saveLibrary} disabled={saving}><Check size={15} /> {saving ? 'Guardando…' : 'Guardar rutas'}</button></div>
           <div className="settings-card-footer"><span>Vuelve a leer las carpetas y sus archivos MKV.</span><button type="button" className="button button-secondary settings-save-button" onClick={onScanLibrary}><RefreshCw size={15} /> Analizar biblioteca</button></div>
@@ -114,7 +199,7 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
             <div className="settings-integration-list">
               <article className="settings-integration"><div className="settings-integration-logo anime-logo">AT</div><div className="settings-integration-copy"><strong>AnimeThemes</strong><span>La conectividad se comprueba cuando se realiza una búsqueda o descarga de templates.</span></div><StatusBadge status="Bajo demanda" compact /></article>
               <article className="settings-integration"><div className="settings-integration-logo tool-logo"><HardDrive size={18} /></div><div className="settings-integration-copy"><strong>Preparación automática</strong><span>{pluginManager?.message || 'Comprobando el estado del gestor de herramientas…'}{pluginManager?.last_error ? ` ${pluginManager.last_error}` : ''}</span></div><StatusBadge status={pluginManager?.status === 'ready' ? 'Listo' : pluginManager?.status === 'analysis_ready' ? 'Análisis listo' : pluginManager?.status === 'error' ? 'Error' : pluginManager?.status === 'manual_setup_required' ? 'Manual' : 'Pendiente'} compact /></article>
-              {['ffmpeg', 'ffprobe', 'mkvpropedit', 'mkvmerge'].map((name) => <article className="settings-integration" key={name}><div className="settings-integration-logo tool-logo"><HardDrive size={18} /></div><div className="settings-integration-copy"><strong>{name}</strong><span>{tools?.[name]?.path || (tools ? 'No se encontró en plugins_path ni PATH.' : 'Comprobando…')}</span></div><StatusBadge status={toolStatus(name)} compact /></article>)}
+              {['ffmpeg', 'ffprobe', 'mkvpropedit', 'mkvmerge', 'mkvextract'].map((name) => <article className="settings-integration" key={name}><div className="settings-integration-logo tool-logo"><HardDrive size={18} /></div><div className="settings-integration-copy"><strong>{name}</strong><span>{tools?.[name]?.path || (tools ? 'No se encontró en plugins_path ni PATH.' : 'Comprobando…')}</span></div><StatusBadge status={toolStatus(name)} compact /></article>)}
             </div>
 
             <section className="artwork-provider-info">
