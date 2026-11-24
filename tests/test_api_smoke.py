@@ -74,11 +74,14 @@ def test_successful_injection_refreshes_episode_file_metadata(tmp_path, monkeypa
         "chapters": [{"title": "Episode", "start": 0.0, "end": 60.0}],
     })
 
-    def fake_inject(path, _chapters, _plugins, _backup_root, *, replace_existing):
+    def fake_inject(path, _chapters, _plugins, _backup_root, *, replace_existing, episode_id=None):
         path.write_bytes(b"mkv bytes after chapter injection")
-        return backup
+        transaction_dir = tmp_path / "fake_transaction"
+        transaction_dir.mkdir(exist_ok=True)
+        return {"transaction_path": str(transaction_dir), "backup_path": str(backup)}
 
     monkeypatch.setattr(chapter_service, "inject_chapters_with_backup", fake_inject)
+    monkeypatch.setattr(chapter_service, "finalize_injection_transaction", lambda _transaction: None)
 
     with TestClient(app) as client:
         response = client.post(f"/api/episodes/{episode_id}/inject", json={"confirm": True})

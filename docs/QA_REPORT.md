@@ -36,7 +36,7 @@
 | Recuento de migración con registros preexistentes | Verificado sin sobrecontar |
 | Fingerprint y detección de cambios en archivos | Verificado con fixtures |
 | Validación de timestamps y XML de capítulos | Verificada |
-| Restauración del backup tras fallo de verificación | Verificada con sustitución simulada de herramientas externas |
+| Respaldo transaccional temporal y restauración | Éxito/limpieza, fallo de verificación, fallo de restauración con conservación en recovery, espacio insuficiente y reconciliación de cierre inesperado |
 | Recuperación del directorio staging de templates | Verificada con fixtures |
 | Conversión WAV y cache invalidation al cambiar/eliminar videos fuente | Verificada con fixtures |
 | Verificación exacta de capítulos por cantidad, títulos y tiempos | Verificada con FFprobe real sobre un MKV sintético; además se probó el rollback simulado |
@@ -45,7 +45,7 @@
 | Índices independientes 0–100 de confianza de coincidencia y precisión temporal OP/ED | Pruebas de ambas dimensiones, umbrales, métricas ausentes, anomalías sin penalización artificial y agregación de revisión |
 | Snapshot original e historial de correcciones/retiradas | Migración SQLite y prueba de persistencia manual |
 | Cola de revisión y selección de episodios elegibles | Frontend tests/build; validación visual Windows pendiente |
-| Inyección masiva secuencial con backup/verificación por MKV | Pruebas de lógica/job; validación real en Windows con MKV representativos pendiente |
+| Inyección masiva secuencial y preflight de espacio | Estimación por el MKV más grande, reserva mínima y bloqueo por espacio insuficiente; validación real en Windows pendiente |
 | Previsualización del lote antes de confirmar | Frontend tests y build aprobados; verificación visual en Windows pendiente |
 
 Las pruebas se ejecutaron en el entorno Python disponible durante la construcción. La configuración de Windows indicada en `setup_windows.bat` todavía debe validarse en un equipo Windows real.
@@ -67,7 +67,7 @@ La rama `feature/recover-cli-workflows` incorpora nuevas pruebas para:
 - La extracción segura de ZIP y la recuperación de carpetas de plugins tras una interrupción.
 - Los nombres de capítulos históricos y el idioma `spa/es`, manteniendo backup, verificación y rollback.
 
-**Estado de esta rama:** GitHub Actions completó correctamente `compileall`, `pytest` (**97 pruebas aprobadas, 1 warning**), `npm test` y `npm run build`. La suite cubre las bandas de confianza, la migración e historial de correcciones, la protección del motor de detección y la cola de inyección. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales, la inyección masiva sobre MKV representativos y la inspección visual se deben validar además en Windows.
+**Estado de esta rama:** la validación automatizada del ciclo transaccional de respaldos está en curso. El recuento final de pruebas se actualizará tras completar GitHub Actions. La suite cubre las bandas de confianza, la migración e historial de correcciones, la protección del motor de detección y la cola de inyección. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales, la inyección masiva sobre MKV representativos y la inspección visual se deben validar además en Windows.
 
 
 ## Comprobaciones pendientes
@@ -187,3 +187,12 @@ La validación de esta iteración se registra en el paquete entregado. El build 
 - Si la carga falla, se muestra el error de la serie solicitada con acciones para reintentar o volver al Dashboard.
 - Pruebas Python: 60 aprobadas. Pruebas de secuencia frontend con Node `node:test`: 3 aprobadas. TypeScript Compiler API: 20 archivos JS/JSX/TS analizados sin errores de sintaxis. CSS: 5 hojas analizadas sin errores.
 - El build Vite no se ejecutó en este entorno porque las dependencias npm no están instaladas localmente. Debe validarse en Windows con `npm.cmd run build` dentro de `frontend`.
+
+
+## Política de respaldos MKV
+
+- La ubicación predeterminada es `<project_root>/backups/` cuando la raíz permite escritura; las instalaciones protegidas utilizan AppData. Los respaldos antiguos no vacíos de AppData permanecen donde estaban.
+- La estructura separa `temporary/`, `recovery/` y `chapters/`; `backups/` está excluido de Git.
+- El preflight informa tamaño total, archivo más grande y espacio libre/requerido. La estimación secuencial usa el archivo más grande más una reserva de 1 % (mínimo 256 MiB), con comprobación inmediata antes de cada copia.
+- La copia completa se elimina después de que FFprobe verifica capítulos y SQLite confirma `SUCCEEDED`. Cuando existían capítulos previos, su XML se conserva de forma independiente.
+- Si la restauración falla, el respaldo íntegro se conserva en Recovery; Settings muestra los archivos pendientes y permite abrir esa carpeta.

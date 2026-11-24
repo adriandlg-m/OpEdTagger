@@ -181,6 +181,11 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
                   </ul>
                 </div>
               )}
+              {backupSummary?.legacy_backup_count > 0 && (
+                <p className="settings-backup-note">
+                  Se detectaron {backupSummary.legacy_backup_count} respaldo(s) antiguos ({formatStorageBytes(backupSummary.legacy_backup_bytes)}) en esta ubicación. No se eliminan ni se migran automáticamente.
+                </p>
+              )}
               {backupSummary && backupSummary.temporary_count > 0 && (
                 <p className="settings-backup-note">
                   Hay {backupSummary.temporary_count} transacción(es) temporal(es) pendientes de limpieza ({formatStorageBytes(backupSummary.temporary_bytes)}).

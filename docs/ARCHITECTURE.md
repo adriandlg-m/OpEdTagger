@@ -40,7 +40,7 @@ Los resultados asociados a archivos de biblioteca se vuelven a validar por versi
 
 ### Inyección
 
-`NOT_REQUESTED` → `IN_PROGRESS` → `SUCCEEDED` o `FAILED`. Si el proceso se interrumpe mientras el valor está en `IN_PROGRESS`, startup cambia a `RECOVERY_REQUIRED`. Ese estado bloquea nuevas inyecciones automáticas y exige inspección humana del MKV y del respaldo.
+`NOT_REQUESTED` → `IN_PROGRESS` → `SUCCEEDED` o `FAILED`. Si el proceso se interrumpe durante la fase de escritura, startup conserva la transacción en `backups/recovery/` y cambia el valor a `RECOVERY_REQUIRED`. Las interrupciones en `PREPARING` o `BACKUP_READY` se limpian porque todavía no hubo modificación y el episodio vuelve a `NOT_REQUESTED`.
 
 Los estados de un job son `queued`, `running`, `completed`, `completed_with_errors`, `failed`, `cancelled` o `interrupted`. Los trabajos `series` e `injection` comparten un índice único de SQLite que impide más de una operación activa en la misma serie.
 
@@ -51,8 +51,8 @@ Los estados de un job son `queued`, `running`, `completed`, `completed_with_erro
 3. **Serie:** un job sincroniza AnimeThemes mediante el GraphQL actual (`graphql.animethemes.moe`), consulta `search(search:, first:)` y `anime(slug:)`, y selecciona todos los resultados cuyo slug/título romaji coincida, con fallback a la lista del proveedor como en el CLI. Cada descarga reporta estado, Opening/Ending y bytes transferidos. La preparación de templates ocupa el primer tramo del progreso; el análisis de episodios continúa del 20 al 100 %. Los WAV se validan antes de consultar caché y analizar. Una interrupción de AnimeThemes se informa y, cuando hay una caché local existente, esta puede reutilizarse.
 4. **Análisis individual:** carga multipart temporal, job independiente, resultado guardado en el item del job. No se añade al catálogo ni habilita inyección en esta versión.
 5. **Confianza y revisión:** cada OP/ED recibe dos índices heurísticos independientes de 0–100. La confianza de coincidencia evalúa la similitud normalizada y la separación frente a otros templates. La precisión temporal estimada evalúa la anchura del pico de alineación al 95 % y su distinción frente a otras posiciones. La consistencia entre episodios del mismo template y las anomalías se conservan como contexto/advertencias; no reducen artificialmente las dos puntuaciones. La precisión temporal describe la localización del inicio: el final se deriva de la duración del template y no se valida como un segundo límite independiente. Ningún índice es una probabilidad calibrada. La revisión se activa si cualquiera de las dos dimensiones es baja o no evaluable; valores medios recomiendan revisión. La revisión manual permite ajustar o retirar un segmento, conserva los valores originales y añade una entrada a `analysis_segment_history`. Cambiar timestamps invalida el estado de inyección anterior.
-6. **Inyección individual o masiva:** los estados `AUTO_APPROVED`, `REVIEW_RECOMMENDED`, `MANUALLY_REVIEWED` y `APPROVED` son elegibles; `PENDING`/`UNASSESSED` no lo son. El usuario selecciona episodios, revisa una vista previa desplazable con los timestamps OP/ED y confirma una operación masiva. Un job durable procesa los MKV secuencialmente, con backup por archivo, detección de capítulos existentes, escritura con MKVToolNix y verificación posterior de cantidad, títulos y tiempos con FFprobe. Los fallos se registran por episodio y no cancelan el resto del lote.
-7. **Recovery:** jobs `queued/running` pasan a `interrupted`. Inyecciones `IN_PROGRESS` pasan a `RECOVERY_REQUIRED`. No hay repetición destructiva automática.
+6. **Inyección individual o masiva:** los estados `AUTO_APPROVED`, `REVIEW_RECOMMENDED`, `MANUALLY_REVIEWED` y `APPROVED` son elegibles; `PENDING`/`UNASSESSED` no lo son. El preflight informa tamaño total, archivo más grande, espacio requerido/disponible y archivos que ya tienen capítulos. El job durable procesa secuencialmente: solo necesita espacio para el MKV más grande del lote más una reserva, no para la suma de todos. Cada episodio se protege con una copia MKV temporal y, si corresponde, una exportación XML de sus capítulos previos; FFprobe verifica la escritura antes de registrar el éxito en SQLite. La copia completa se elimina después del commit. Los fallos se registran por episodio y no cancelan el resto del lote, salvo que la restauración falle y requiera detener la operación.
+7. **Recovery:** jobs `queued/running` pasan a `interrupted`. Las transacciones `PREPARING`/`BACKUP_READY` se eliminan y el episodio vuelve a `NOT_REQUESTED`. Las transacciones `INJECTING` o no reconciliables se conservan en `backups/recovery/` y el episodio pasa a `RECOVERY_REQUIRED`. Las transacciones `VERIFIED` cuyo estado SQLite es `SUCCEEDED` se finalizan y limpian. No hay repetición destructiva automática.
 
 ## Seguridad
 
@@ -65,8 +65,10 @@ Los estados de un job son `queued`, `running`, `completed`, `completed_with_erro
 - Carpetas de plantillas y herramientas en la raíz del proyecto, excluidas de Git; los datos de ejecución siguen en AppData.
 - Las plantillas nuevas se descargan a staging; al iniciar una descarga posterior se recupera una carpeta anterior si el proceso se interrumpió durante el intercambio.
 - Archivos MKV nunca se modifican durante análisis.
-- Respaldo previo y rollback best-effort durante inyección.
-- Si la restauración automática falla, la respuesta entrega ubicación del backup y el estado requiere recuperación manual.
+- Respaldo MKV temporal obligatorio, comprobación de espacio antes del lote y de nuevo antes de cada copia.
+- Restauración directa del original sin un segundo archivo temporal en la unidad de medios; el respaldo permanece intacto hasta validar la restauración.
+- XML ligero de los capítulos previos cuando se reemplazan.
+- Limpieza del MKV completo solo tras el commit SQLite; los casos no recuperables conservan la transacción en `backups/recovery/`.
 
 ## Decisiones abiertas
 

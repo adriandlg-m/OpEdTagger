@@ -14,9 +14,10 @@ Esta distribución combina el motor de análisis del proyecto original con la in
 - Los resultados de análisis, revisión e inyección tienen estados independientes.
 - La inyección permite resultados autoaprobados, recomendaciones de revisión y detecciones verificadas manualmente; las detecciones de baja confianza o sin evaluar quedan bloqueadas hasta resolverlas.
 - El índice de confianza de 0–100 es una métrica heurística de clasificación, no una probabilidad de acierto calibrada.
-- Antes de modificar un MKV se crea una copia de seguridad.
-- Si la inyección falla, el sistema intenta restaurar la copia.
-- Si la aplicación se interrumpe durante la inyección, el registro pasa a `RECOVERY_REQUIRED`; no se repite automáticamente.
+- Antes de modificar un MKV se crea una copia de seguridad completa y temporal, verificada por tamaño y fingerprint.
+- La inyección se realiza con `mkvpropedit`; FFprobe comprueba cantidad, títulos y timestamps. Tras guardar el resultado verificado en SQLite, se elimina la copia completa. Si falla la operación, se restaura el original; si la restauración no puede verificarse, el respaldo se conserva en `backups/recovery`.
+- Si la aplicación se interrumpe durante la escritura, el registro pasa a `RECOVERY_REQUIRED`; no se repite automáticamente. Las transacciones interrumpidas antes de empezar a modificar el MKV se limpian y vuelven a `NOT_REQUESTED`.
+- Cuando se reemplazan capítulos existentes, se conserva su XML en `backups/chapters`; este archivo ligero no sustituye a la copia MKV utilizada durante la escritura.
 - Si FFprobe no puede determinar la duración, no se genera una vista previa ni se inyectan capítulos con una duración inventada.
 - La API se enlaza a `127.0.0.1`, no a todas las interfaces de red.
 
@@ -76,11 +77,13 @@ Los archivos `.bat` son accesos rápidos compatibles con doble clic y priorizan 
 
 ## Ubicación de datos
 
-La aplicación separa los datos de ejecución de los recursos de trabajo. Configuración, SQLite, respaldos, cargas temporales y logs se guardan en el directorio de datos del usuario:
+La aplicación separa los datos de ejecución de los recursos de trabajo. Configuración, SQLite, cargas temporales y logs se guardan en el directorio de datos del usuario:
 
 - Windows: `%LOCALAPPDATA%\OpEdTagger`
 - macOS: `~/Library/Application Support/OpEdTagger`
 - Linux: `$XDG_DATA_HOME/OpEdTagger` o `~/.local/share/OpEdTagger`
+
+Los respaldos se guardan por defecto en `OpEdTagger/backups/` si la raíz del proyecto permite escritura. En instalaciones dentro de directorios protegidos se utiliza `%LOCALAPPDATA%\OpEdTagger\backups` (o el directorio de datos equivalente). La ruta puede configurarse desde Settings. La carpeta contiene `temporary/` (copias MKV durante una transacción), `recovery/` (archivos que requieren inspección) y `chapters/` (XML ligeros de capítulos reemplazados). Los respaldos anteriores que ya existan en AppData no se mueven ni duplican automáticamente.
 
 Las carpetas `templates/` y `plugins/` se encuentran en la raíz del proyecto. Cada serie utiliza `templates/<serie>/video_files` para los vídeos OP/ED y `templates/<serie>/songs_files` para los WAV derivados. Las herramientas multimedia se instalan en `plugins/`. Estas carpetas están excluidas de Git.
 
@@ -97,7 +100,7 @@ La biblioteca del usuario no se copia al directorio de datos. Las cargas del an�
 3. El worker sincroniza los templates, prepara los WAV y analiza los episodios. Reutiliza caché solo cuando coinciden la versión del analizador, la versión del modelo de confianza, la firma de templates, el tamaño, la fecha de modificación y el fingerprint muestreado del MKV.
 4. Cada Opening y Ending encontrado recibe una puntuación de confianza independiente de 0 a 100: alta (90–100), media (70–89), baja (0–69) o sin evaluar. La detección se guarda automáticamente aunque necesite revisión.
 5. Abre **Ver excepciones** para revisar los resultados de baja confianza o las detecciones medias recomendadas. Puedes corregir los segundos o descartar un OP/ED falso positivo. El resultado original permanece en la base de datos y cada corrección o retirada se registra en el historial.
-6. Selecciona los episodios elegibles y pulsa **Inyectar seleccionados**. Antes de iniciar, se abre una vista previa desplazable con los timestamps OP/ED de cada episodio, el recuento del lote y la opción de reemplazar capítulos existentes. Tras confirmar, OpEdTagger procesa los MKV secuencialmente, crea una copia de seguridad por archivo y verifica los capítulos escritos con FFprobe. Los resultados individuales quedan registrados en el trabajo masivo.
+6. Selecciona los episodios elegibles y pulsa **Inyectar seleccionados**. Antes de iniciar, OpEdTagger comprueba el espacio en la ubicación de respaldos; la vista previa muestra el tamaño total, el MKV más grande, el espacio requerido/disponible y cuántos archivos ya contienen capítulos. Tras confirmar, procesa los MKV secuencialmente: conserva una copia completa temporal mientras escribe y verifica cada archivo; cuando el resultado queda registrado en SQLite, elimina esa copia. Si una restauración falla o la aplicación se interrumpe durante la escritura, conserva el original en `backups/recovery/`. Si se reemplazan capítulos existentes, su XML original se conserva en `backups/chapters/`.
 
 Los episodios sin coincidencias se conservan como `NO_MATCH`, no como errores ni como análisis exitosos con datos vacíos.
 
