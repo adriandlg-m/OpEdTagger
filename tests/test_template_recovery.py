@@ -48,18 +48,26 @@ def test_ensure_templates_synchronizes_all_cli_matches_automatically(tmp_path, m
         "plugins_path": str(tmp_path / "plugins"),
     })
     payload_rows = [
-        {"slug": "my-show", "title": {"romaji": "My Show", "english": "My Show"}, "themes": []},
-        {"slug": "my-show-season-2", "title": {"romaji": "My Show Season 2", "english": "My Show 2"}, "themes": []},
-        {"slug": "unrelated-anime", "title": {"romaji": "Unrelated Anime", "english": "Unrelated"}, "themes": []},
+        {"slug": "my-show", "title": {"romaji": "My Show", "english": "My Show"}},
+        {"slug": "my-show-season-2", "title": {"romaji": "My Show Season 2", "english": "My Show 2"}},
+        {"slug": "unrelated-anime", "title": {"romaji": "Unrelated Anime", "english": "Unrelated"}},
     ]
     seen_queries = []
     downloaded = []
     monkeypatch.setattr(
         template_service,
         "_post_graphql",
-        lambda query: (seen_queries.append(query) or {
-            "data": {"search": {"anime": {"data": payload_rows}}}
+        lambda query, **_kwargs: (seen_queries.append(query) or {
+            "data": {"search": {"anime": payload_rows}}
         }),
+    )
+    monkeypatch.setattr(
+        template_service,
+        "_fetch_anime_details",
+        lambda slug, **_kwargs: {"data": {"anime": {
+            **next(row for row in payload_rows if row["slug"] == slug),
+            "animethemes": [],
+        }}},
     )
     monkeypatch.setattr(
         template_service,
@@ -105,13 +113,17 @@ def test_legacy_cli_video_templates_are_synchronized_when_manifest_is_missing(tm
     anime_row = {
         "slug": "legacy-show",
         "title": {"romaji": "Legacy Show", "english": "Legacy Show"},
-        "themes": [],
     }
     seen = []
     monkeypatch.setattr(
         template_service,
         "_post_graphql",
-        lambda _query: {"data": {"search": {"anime": {"data": [anime_row]}}}},
+        lambda _query, **_kwargs: {"data": {"search": {"anime": [anime_row]}}},
+    )
+    monkeypatch.setattr(
+        template_service,
+        "_fetch_anime_details",
+        lambda _slug, **_kwargs: {"data": {"anime": {**anime_row, "animethemes": []}}},
     )
     monkeypatch.setattr(
         template_service,
@@ -147,7 +159,7 @@ def test_valid_manual_wav_templates_do_not_force_anime_themes_download(tmp_path,
     monkeypatch.setattr(
         template_service,
         "_post_graphql",
-        lambda _query: pytest.fail("A valid manual WAV library should be preserved."),
+        lambda _query, **_kwargs: pytest.fail("A valid manual WAV library should be preserved."),
     )
 
     result = template_service.ensure_templates("Manual Show")
@@ -187,25 +199,27 @@ def test_template_download_creates_both_folders_and_preserves_existing_song_file
         "template_path": str(template_root),
         "plugins_path": str(plugins_root),
     })
-    monkeypatch.setattr(template_service, "search_candidates", lambda _query: [{"slug": "example-show"}])
-    monkeypatch.setattr(template_service, "_post_graphql", lambda _query: {
-        "data": {"search": {"anime": {"data": [{
+    monkeypatch.setattr(template_service, "_fetch_anime_details", lambda _slug, **_kwargs: {
+        "data": {"anime": {
             "slug": "example-show",
             "title": {"romaji": "Example Show", "english": "Example Show"},
-            "themes": [{
+            "animethemes": [{
                 "type": "OP",
                 "sequence": 1,
-                "entries": [{"videos": {"nodes": [{
+                "animethemeentries": [{"videos": {"nodes": [{
                     "link": "https://cdn.animethemes.moe/example-op.webm",
-                    "filename": "example-op.webm",
+                    "basename": "example-op.webm",
                     "resolution": 1080,
+                    "nc": False,
                 }]}}],
             }],
-        }]}}}
+        }}
     })
 
-    def fake_download(_url, target):
+    def fake_download(_url, target, on_progress=None):
         target.write_bytes(b"downloaded-video")
+        if on_progress:
+            on_progress(target.stat().st_size, target.stat().st_size)
 
     monkeypatch.setattr(template_service, "_download", fake_download)
 
