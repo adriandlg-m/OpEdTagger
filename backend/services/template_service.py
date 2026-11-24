@@ -271,7 +271,25 @@ def _choose_exact_candidate(series_name: str, candidates: list[dict]) -> dict | 
     return exact[0] if len(exact) == 1 else None
 
 
-def _download(url: str, target: Path, timeout: int = 90, attempts: int = 3) -> None:
+def _format_bytes(value: int | None) -> str:
+    if value is None or value < 0:
+        return "tamaño desconocido"
+    units = ("B", "KB", "MB", "GB")
+    size = float(value)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
+def _download(
+    url: str,
+    target: Path,
+    timeout: int = 30,
+    attempts: int = 2,
+    on_progress: Callable[[int, int | None], None] | None = None,
+) -> None:
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.netloc:
         raise ValueError("AnimeThemes returned a non-HTTPS media URL; refusing download.")
@@ -290,7 +308,7 @@ def _download(url: str, target: Path, timeout: int = 90, attempts: int = 3) -> N
                 url,
                 headers=headers,
                 stream=True,
-                timeout=timeout,
+                timeout=(10, timeout),
                 **_request_options(),
             ) as response:
                 if response.status_code == 206 and current_size:
@@ -299,36 +317,85 @@ def _download(url: str, target: Path, timeout: int = 90, attempts: int = 3) -> N
                         part.unlink(missing_ok=True)
                         raise RuntimeError("AnimeThemes returned an inconsistent resume offset.")
                     mode = "ab"
+                    downloaded = current_size
+                    total = None
+                    if "/" in content_range and content_range.rsplit("/", 1)[-1].isdigit():
+                        total = int(content_range.rsplit("/", 1)[-1])
                 elif response.status_code == 200:
                     mode = "wb"
+                    downloaded = 0
+                    current_size = 0
+                    raw_length = response.headers.get("Content-Length")
+                    total = int(raw_length) if raw_length and raw_length.isdigit() else None
                 elif response.status_code == 416 and part.exists():
                     content_range = response.headers.get("Content-Range", "")
-                    total = content_range.rsplit("/", 1)[-1] if "/" in content_range else ""
-                    if total.isdigit() and int(total) == part.stat().st_size:
+                    total_text = content_range.rsplit("/", 1)[-1] if "/" in content_range else ""
+                    if total_text.isdigit() and int(total_text) == part.stat().st_size:
                         part.replace(target)
+                        if on_progress:
+                            on_progress(target.stat().st_size, target.stat().st_size)
                         return
                     part.unlink(missing_ok=True)
                     raise RuntimeError("The partial download could not be resumed; restarting it.")
                 else:
                     response.raise_for_status()
                     mode = "wb"
+                    downloaded = 0
+                    current_size = 0
+                    raw_length = response.headers.get("Content-Length")
+                    total = int(raw_length) if raw_length and raw_length.isdigit() else None
 
+                if total is None:
+                    raw_length = response.headers.get("Content-Length")
+                    if raw_length and raw_length.isdigit():
+                        total = current_size + int(raw_length)
+
+                if on_progress:
+                    on_progress(downloaded, total)
+
+                last_reported = downloaded
+                last_report_time = time.monotonic()
                 with part.open(mode) as stream:
-                    for chunk in response.iter_content(chunk_size=1024 * 1024):
-                        if chunk:
-                            stream.write(chunk)
+                    for chunk in response.iter_content(chunk_size=256 * 1024):
+                        if not chunk:
+                            continue
+                        stream.write(chunk)
+                        downloaded += len(chunk)
+                        now = time.monotonic()
+                        # Avoid writing dozens of SQLite updates per second.
+                        if on_progress and (
+                            downloaded - last_reported >= 512 * 1024
+                            or now - last_report_time >= 0.4
+                        ):
+                            on_progress(downloaded, total)
+                            last_reported = downloaded
+                            last_report_time = now
 
             if not part.exists() or part.stat().st_size == 0:
                 raise RuntimeError(f"Downloaded template is empty: {target.name}")
             part.replace(target)
+            if on_progress:
+                final_size = target.stat().st_size
+                on_progress(final_size, total or final_size)
             return
+        except InterruptedError:
+            # Keep the partial file so a user-cancelled operation can resume later.
+            raise
         except Exception as exc:
             last_error = exc
-            logger.warning("AnimeThemes download attempt %s/%s failed for %s: %s", attempt, attempts, target.name, exc)
+            logger.warning(
+                "AnimeThemes download attempt %s/%s failed for %s: %s",
+                attempt,
+                attempts,
+                target.name,
+                exc,
+            )
             if attempt < attempts:
-                time.sleep(min(2 ** attempt, 8))
+                time.sleep(min(float(attempt), 2.0))
 
-    raise RuntimeError(f"Could not download template '{target.name}' after {attempts} attempts: {last_error}") from last_error
+    raise RuntimeError(
+        f"Could not download template '{target.name}' after {attempts} attempts: {last_error}"
+    ) from last_error
 
 
 def _download_anime_rows_templates_impl(
