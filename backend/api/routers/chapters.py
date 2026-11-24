@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException
 
@@ -12,6 +13,8 @@ from backend.services.chapter_service import CHAPTER_OPERATION_LOCK, inject_epis
 from core.confidence import episode_review_status
 from backend.services.log_service import log_event
 from core.media_tools import build_chapters, get_mkv_duration
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/episodes", tags=["Episodes / Chapters"])
 
@@ -40,6 +43,10 @@ def review_episode(episode_id: int, body: ReviewUpdate):
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
+            logger.exception(
+                "Episode path/fingerprint validation failed before review (episode_id=%s).",
+                episode_id,
+            )
             raise HTTPException(
                 status_code=403,
                 detail="The episode is no longer available inside the configured library.",
