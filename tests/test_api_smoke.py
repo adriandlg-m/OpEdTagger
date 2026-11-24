@@ -32,11 +32,11 @@ def test_successful_injection_refreshes_episode_file_metadata(tmp_path, monkeypa
     from backend.infrastructure.database import db_session, init_db, utc_now
     from backend.services.library_service import list_series
     from core.fingerprints import ANALYZER_VERSION, file_fingerprint
-    from backend.api.routers import chapters
+    from backend.services import chapter_service
 
     # MKVToolNix provisioning is a separate Windows integration; this API
-    # regression test stubs it and focuses on post-injection metadata updates.
-    monkeypatch.setattr(chapters, "ensure_chapter_plugins", lambda _cfg: {"status": "ready"})
+    # regression test stubs the extracted chapter-injection service.
+    monkeypatch.setattr(chapter_service, "ensure_chapter_plugins", lambda _cfg: {"status": "ready"})
 
     library = tmp_path / "library"
     series_dir = library / "Example"
@@ -64,7 +64,7 @@ def test_successful_injection_refreshes_episode_file_metadata(tmp_path, monkeypa
 
     backup = tmp_path / "backup.mkv"
     backup.write_bytes(b"original mkv bytes")
-    monkeypatch.setattr(chapters, "preview_episode_chapters", lambda _episode_id: {
+    monkeypatch.setattr(chapter_service, "preview_episode_chapters", lambda _episode_id: {
         "chapters": [{"title": "Episode", "start": 0.0, "end": 60.0}],
     })
 
@@ -72,7 +72,7 @@ def test_successful_injection_refreshes_episode_file_metadata(tmp_path, monkeypa
         path.write_bytes(b"mkv bytes after chapter injection")
         return backup
 
-    monkeypatch.setattr(chapters, "inject_chapters_with_backup", fake_inject)
+    monkeypatch.setattr(chapter_service, "inject_chapters_with_backup", fake_inject)
 
     with TestClient(app) as client:
         response = client.post(f"/api/episodes/{episode_id}/inject", json={"confirm": True})

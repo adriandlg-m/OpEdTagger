@@ -12,7 +12,18 @@ def test_sqlite_schema_and_log_storage(tmp_path):
     init_db()
     with db_session() as conn:
         tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"series", "episodes", "analysis_results", "jobs", "job_items", "activity_logs", "migration_history", "schema_migrations"}.issubset(tables)
+        assert {
+            "series", "episodes", "analysis_results", "analysis_segment_history",
+            "jobs", "job_items", "activity_logs", "migration_history", "schema_migrations",
+        }.issubset(tables)
+        analysis_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(analysis_results)").fetchall()
+        }
+        assert {"op_original_json", "ed_original_json", "confidence_version"}.issubset(analysis_columns)
+        migration_versions = {
+            row["version"] for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+        assert 4 in migration_versions
         conn.execute(
             "INSERT INTO activity_logs(timestamp,level,source,message) VALUES(?,?,?,?)",
             ("2026-01-01T00:00:00+00:00", "INFO", "test", "persisted"),
