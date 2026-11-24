@@ -34,10 +34,56 @@ def test_template_swap_cleans_old_previous_after_new_target_is_committed(tmp_pat
     assert not previous.exists()
 
 
+
+def test_ensure_templates_selects_anime_themes_result_automatically_using_cli_style_matching(tmp_path, monkeypatch):
+    from backend.services import template_service
+
+    template_root = tmp_path / "templates"
+    monkeypatch.setattr(template_service, "load_config", lambda: {
+        "template_path": str(template_root),
+        "plugins_path": str(tmp_path / "plugins"),
+    })
+    seen_queries = []
+    selected = []
+    candidates = [
+        {"slug": "unrelated-anime", "title_romaji": "Unrelated Anime", "opening_count": 2, "ending_count": 1},
+        {"slug": "my-show-season-2", "title_romaji": "My Show Season 2", "opening_count": 3, "ending_count": 2},
+    ]
+    monkeypatch.setattr(
+        template_service,
+        "search_candidates",
+        lambda query: (seen_queries.append(query) or candidates),
+    )
+    monkeypatch.setattr(
+        template_service,
+        "download_selected_templates",
+        lambda series_name, slug, progress=None: selected.append((series_name, slug)),
+    )
+
+    result = template_service.ensure_templates("My Show (2022) [1080p]")
+
+    assert result == template_root / "My Show (2022) [1080p]"
+    assert seen_queries == ["My Show"]
+    assert selected == [("My Show (2022) [1080p]", "my-show-season-2")]
+
+
+def test_automatic_template_selection_falls_back_to_first_result_with_op_ed():
+    from backend.services.template_service import _choose_automatic_candidate
+
+    candidates = [
+        {"slug": "anime-without-themes", "opening_count": 0, "ending_count": 0},
+        {"slug": "provider-ranked-match", "opening_count": 1, "ending_count": 1},
+    ]
+
+    selected = _choose_automatic_candidate("Local Folder Name", candidates)
+
+    assert selected["slug"] == "provider-ranked-match"
+
+
 def test_template_download_creates_both_folders_and_preserves_existing_song_files(tmp_path, monkeypatch):
     from backend.services import template_service
 
-    template_root = tmp_path / "Templates"
+    template_root = tmp_path / "templates"
     plugins_root = tmp_path / "plugins"
     existing_songs = template_root / "Example Show" / "songs_files"
     existing_songs.mkdir(parents=True)
