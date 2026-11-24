@@ -84,10 +84,11 @@ def _graphql_request(
     progress: Callable[[str, float, str], None] | None = None,
     stage: str = "searching_templates",
     item: str = "AnimeThemes",
+    progress_percentage: float = 1.0,
 ) -> dict:
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
-        _report_progress(progress, stage, 1.0, f"{item} · consulta {attempt}/{attempts}")
+        _report_progress(progress, stage, progress_percentage, f"{item} · consulta {attempt}/{attempts}")
         try:
             response = http.post(
                 GRAPHQL_URL,
@@ -102,7 +103,18 @@ def _graphql_request(
                     delay = min(max(float(retry_after), 1.0), 5.0)
                 except (TypeError, ValueError):
                     delay = min(float(attempt), 3.0)
-                raise RuntimeError(f"AnimeThemes limitó temporalmente la consulta (HTTP 429). Reintento en {delay:g}s.")
+                if attempt < attempts:
+                    _report_progress(
+                        progress,
+                        stage,
+                        progress_percentage,
+                        f"{item} · límite HTTP 429; reintentando en {delay:g}s",
+                    )
+                    time.sleep(delay)
+                    continue
+                raise RuntimeError(
+                    f"AnimeThemes limitó la consulta (HTTP 429) después de {attempts} intentos."
+                )
             response.raise_for_status()
             payload = response.json()
             if not isinstance(payload, dict):
@@ -169,6 +181,7 @@ def _fetch_anime_details(
         progress=progress,
         stage="loading_template_metadata",
         item=f"Obteniendo OP/ED de {slug}",
+        progress_percentage=percentage,
     )
 
 
