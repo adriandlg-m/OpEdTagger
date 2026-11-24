@@ -14,6 +14,7 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
   const [showOutliers, setShowOutliers] = useState(preferences?.show_outliers !== false);
   const [logRefresh, setLogRefresh] = useState(preferences?.log_refresh !== false);
   const [tools, setTools] = useState(null);
+  const [pluginManager, setPluginManager] = useState(null);
   const [saving, setSaving] = useState(false);
   const [browsingLibrary, setBrowsingLibrary] = useState(false);
 
@@ -29,7 +30,15 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
     setLogRefresh(preferences?.log_refresh !== false);
   }, [preferences]);
   useEffect(() => {
-    api.health().then((data) => setTools(data.tools)).catch(() => setTools(null));
+    let mounted = true;
+    api.health().then((data) => {
+      if (!mounted) return;
+      setTools(data.tools || null);
+      setPluginManager(data.plugin_manager || null);
+    }).catch(() => {
+      if (mounted) { setTools(null); setPluginManager(null); }
+    });
+    return () => { mounted = false; };
   }, []);
 
   const browseLibrary = async () => {
@@ -89,7 +98,7 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
           <div className="settings-section">
             <label className="settings-label" htmlFor="plugins-path">Herramientas multimedia</label>
             <div className="settings-path-control"><div className="settings-path-input-wrap"><Folder size={16} /><input id="plugins-path" type="text" value={pluginsPath} onChange={(e) => setPluginsPath(e.target.value)} spellCheck={false} /></div></div>
-            <div className="settings-field-hint"><Info size={13} /><span>Se buscan FFmpeg, FFprobe y MKVToolNix en esta carpeta y en PATH. No se descargan ejecutables sin una acción explícita.</span></div>
+            <div className="settings-field-hint"><Info size={13} /><span>En Windows x64, OpEdTagger prepara automáticamente FFmpeg y MKVToolNix al iniciar. Las herramientas se guardan aquí; si una descarga falla, el estado del gestor aparecerá en Integraciones.</span></div>
           </div>
           <div className="settings-section">
             <label className="settings-label" htmlFor="backup-path">Copias de seguridad de MKV</label>
@@ -103,7 +112,8 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
           <section className="panel settings-card settings-integrations-card">
             <div className="settings-card-heading"><div className="settings-icon settings-icon-blue"><Database size={19} /></div><div><h2>Integraciones y herramientas</h2><p>Disponibilidad detectada en el equipo.</p></div></div>
             <div className="settings-integration-list">
-              <article className="settings-integration"><div className="settings-integration-logo anime-logo">AT</div><div className="settings-integration-copy"><strong>AnimeThemes</strong><span>Consulta y descarga de templates OP/ED.</span></div><StatusBadge status="Listo" compact /></article>
+              <article className="settings-integration"><div className="settings-integration-logo anime-logo">AT</div><div className="settings-integration-copy"><strong>AnimeThemes</strong><span>La conectividad se comprueba cuando se realiza una búsqueda o descarga de templates.</span></div><StatusBadge status="En línea bajo demanda" compact /></article>
+              <article className="settings-integration"><div className="settings-integration-logo tool-logo"><HardDrive size={18} /></div><div className="settings-integration-copy"><strong>Preparación automática</strong><span>{pluginManager?.message || 'Comprobando el estado del gestor de herramientas…'}{pluginManager?.last_error ? ` ${pluginManager.last_error}` : ''}</span></div><StatusBadge status={pluginManager?.status === 'ready' ? 'Listo' : pluginManager?.status === 'error' ? 'Error' : pluginManager?.status === 'manual_setup_required' ? 'Manual' : 'Pendiente'} compact /></article>
               {['ffmpeg', 'ffprobe', 'mkvpropedit', 'mkvmerge'].map((name) => <article className="settings-integration" key={name}><div className="settings-integration-logo tool-logo"><HardDrive size={18} /></div><div className="settings-integration-copy"><strong>{name}</strong><span>{tools?.[name]?.path || (tools ? 'No se encontró en plugins_path ni PATH.' : 'Comprobando…')}</span></div><StatusBadge status={toolStatus(name)} compact /></article>)}
             </div>
 

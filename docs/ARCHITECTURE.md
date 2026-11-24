@@ -46,11 +46,12 @@ Los estados de un job son `queued`, `running`, `completed`, `completed_with_erro
 ## Flujos
 
 1. **Biblioteca:** escaneo recursivo dentro de cada carpeta de serie, filtrando rutas resueltas que salgan del directorio autorizado; reconcilia las filas con el contenido actual y elimina únicamente registros SQLite de archivos/carpetas que ya no existen. Los MKV nunca se eliminan.
-2. **Serie:** un job crea items persistidos, obtiene templates (o informa ambigüedad), consulta caché y analiza cada episodio. Un error individual se guarda como `FAILED` en el episodio y no aborta el resto.
-3. **Análisis individual:** carga multipart temporal, job independiente, resultado guardado en el item del job. No se añade al catálogo ni habilita inyección en esta versión.
-4. **Revisión:** el endpoint valida timestamps contra la duración real de FFprobe. Se permiten correcciones manuales desde la vista detalle. Cambiar timestamps invalida el estado de inyección anterior.
-5. **Inyección:** requiere review `APPROVED`, confirmación explícita y ausencia de otro worker de inyección. Comprueba capítulos existentes, crea backup, usa MKVToolNix, relee con FFprobe la cantidad, títulos y tiempos esperados y restaura backup ante excepción.
-6. **Recovery:** jobs `queued/running` pasan a `interrupted`. Inyecciones `IN_PROGRESS` pasan a `RECOVERY_REQUIRED`. No hay repetición destructiva automática.
+2. **Preparación de herramientas:** en Windows x64, el arranque comprueba FFmpeg/FFprobe y MKVToolNix bajo `plugins_path`. Si faltan, descarga paquetes oficiales, valida SHA-256, extrae en staging con controles de ruta, comprueba los ejecutables y activa las carpetas de forma atómica. Un fallo queda reflejado en `/api/system/health` sin impedir el uso de las funciones que no requieren esas herramientas.
+3. **Serie:** un job crea items persistidos, obtiene templates (o informa ambigüedad), consulta caché y analiza cada episodio. Un error individual se guarda como `FAILED` en el episodio y no aborta el resto.
+4. **Análisis individual:** carga multipart temporal, job independiente, resultado guardado en el item del job. No se añade al catálogo ni habilita inyección en esta versión.
+5. **Revisión:** el endpoint valida timestamps contra la duración real de FFprobe. Se permiten correcciones manuales desde la vista detalle. Cambiar timestamps invalida el estado de inyección anterior.
+6. **Inyección:** requiere review `APPROVED`, confirmación explícita y ausencia de otro worker de inyección. Comprueba capítulos existentes, crea backup, usa MKVToolNix, relee con FFprobe la cantidad, títulos y tiempos esperados y restaura backup ante excepción.
+7. **Recovery:** jobs `queued/running` pasan a `interrupted`. Inyecciones `IN_PROGRESS` pasan a `RECOVERY_REQUIRED`. No hay repetición destructiva automática.
 
 ## Seguridad
 
@@ -59,6 +60,8 @@ Los estados de un job son `queued`, `running`, `completed`, `completed_with_erro
 - Rutas de episodios verificadas dentro de la biblioteca actual.
 - Rutas resueltas para impedir symlinks que escapen de la biblioteca.
 - Descargas de media limitadas a HTTPS.
+- Descargas de herramientas verificadas mediante SHA-256, extracción ZIP/7z con validación de rutas y activación atómica tras pruebas de versión.
+- Carpetas de plantillas y herramientas en la raíz del proyecto, excluidas de Git; los datos de ejecución siguen en AppData.
 - Las plantillas nuevas se descargan a staging; al iniciar una descarga posterior se recupera una carpeta anterior si el proceso se interrumpió durante el intercambio.
 - Archivos MKV nunca se modifican durante análisis.
 - Respaldo previo y rollback best-effort durante inyección.
@@ -70,7 +73,7 @@ Los estados de un job son `queued`, `running`, `completed`, `completed_with_erro
 - Reanudar fases no destructivas de jobs interrumpidos.
 - SSE si el polling deja de ser suficiente.
 - Integración individual-analysis → revisión/inyección.
-- Instalador seguro de dependencias multimedia. El instalador legacy no se reutiliza: extraía ZIP/7z sin validación de rutas y fijaba versiones/URLs antiguas. Esta versión detecta las herramientas, pero el usuario debe instalarlas y configurar su directorio o PATH.
+- Ampliar las pruebas de instalación automática en Windows real, incluyendo interrupciones de red, extracción de archivos, actualizaciones y recuperación de instalaciones parciales.
 - Empaquetado con backend, frontend compilado y herramientas multimedia, sujeto a licencias y validación Windows.
 
 

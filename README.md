@@ -37,8 +37,8 @@ tests/                  Pruebas automatizadas
 - **Persistencia:** SQLite con WAL y claves foráneas.
 - **Trabajos:** cola local persistida con un worker. Los trabajos activos se marcan como interrumpidos al iniciar después de un cierre inesperado; no se repiten solos.
 - **Progreso:** polling REST desde la interfaz.
-- **Motor:** conserva el algoritmo chroma del original (`COSINE_SIMILARITY_THRESHOLD = 0.68`). El valor `score` se presenta como score bruto, nunca como porcentaje ni probabilidad. Los WAV derivados tienen un manifiesto de fingerprints: se regeneran cuando cambia el video fuente y se eliminan si el video fuente desaparece.
-- **Templates:** consulta AnimeThemes; si no hay coincidencia exacta única exige seleccionar el anime. En Detalle de serie se puede buscar y vincular manualmente la entrada correcta; las descargas seleccionadas se preparan en un directorio staging antes de reemplazar la caché anterior.
+- **Motor:** conserva el algoritmo chroma del original (`COSINE_SIMILARITY_THRESHOLD = 0.68`). El detector OP/ED se trata como componente protegido: la preparación de herramientas, las plantillas, la interfaz y la inyección no deben cambiar su lógica ni sus parámetros. Una prueba de contrato verifica sus constantes y pasos críticos. El valor `score` se presenta como score bruto, nunca como porcentaje ni probabilidad. Los WAV derivados tienen un manifiesto de fingerprints: se regeneran cuando cambia el video fuente y se eliminan si el video fuente desaparece.
+- **Templates:** consulta AnimeThemes; si no hay coincidencia exacta única exige seleccionar el anime. En Detalle de serie se puede buscar y vincular manualmente la entrada correcta; las descargas seleccionadas se preparan en un directorio staging antes de reemplazar la caché anterior. La descarga mantiene `songs_files` y sus WAV manuales; el siguiente análisis regenera solo las conversiones derivadas cuyo vídeo fuente haya cambiado.
 
 ## Requisitos
 
@@ -48,7 +48,7 @@ tests/                  Pruebas automatizadas
 - FFmpeg y FFprobe accesibles desde `PATH` o desde el directorio configurado `plugins_path`.
 - MKVToolNix (`mkvmerge` y `mkvpropedit`) para consultar capítulos existentes e inyectarlos.
 
-Esta distribución detecta y valida la disponibilidad de estas herramientas, pero todavía no las descarga ni instala automáticamente. El instalador de plugins del ZIP original utilizaba extracción de archivos sin validación suficiente de rutas y dependía de URLs/versiones antiguas; por seguridad no se ha trasladado. Instala las herramientas desde sus fuentes oficiales y configura `plugins_path` o `PATH`.
+En Windows x64, el backend prepara automáticamente FFmpeg/FFprobe y MKVToolNix al iniciar cuando faltan en `plugins_path`. Las descargas se verifican mediante SHA-256, se extraen en un directorio temporal con validación de rutas y solo se activan después de superar una comprobación de versión. Si la instalación falla, el backend sigue disponible para las funciones que no dependan de esas herramientas y comunica el error en Settings. En otras plataformas se requiere que estén instaladas en `plugins_path` o en `PATH`.
 - Conexión a Internet para consultar AnimeThemes y descargar templates.
 
 La detección puede ejecutarse con FFmpeg y templates ya disponibles. La escritura de capítulos necesita además MKVToolNix.
@@ -76,7 +76,7 @@ Los archivos `.bat` son accesos rápidos compatibles con doble clic y priorizan 
 
 ## Ubicación de datos
 
-La aplicación guarda configuración, SQLite, templates descargados, archivos temporales y logs en el directorio de datos del usuario:
+La aplicación separa los datos de ejecución de los recursos de trabajo. Configuración, SQLite, respaldos, cargas temporales y logs se guardan en el directorio de datos del usuario:
 
 - Windows: `%LOCALAPPDATA%\OpEdTagger`
 - macOS: `~/Library/Application Support/OpEdTagger`

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import secrets
 import shutil
 import subprocess
 import uuid
@@ -18,7 +19,7 @@ def _find_tool(plugins_path: Path, name: str) -> Path:
         candidates.extend(plugins_path.rglob(f"{name}.exe"))
         candidates.extend(plugins_path.rglob(name))
     if candidates:
-        return sorted(candidates, key=lambda p: len(p.parts))[0]
+        return sorted(candidates, key=lambda path: len(path.parts))[0]
     found = shutil.which(name)
     if found:
         return Path(found)
@@ -50,6 +51,11 @@ def _format_time(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{remaining:012.9f}"
 
 
+def _chapter_uid() -> int:
+    # Matroska UIDs are unsigned 64-bit values; avoid zero.
+    return secrets.randbelow((1 << 63) - 1) + 1
+
+
 def build_chapters(op: dict | None, ed: dict | None, duration: float) -> list[dict[str, Any]]:
     if not math.isfinite(float(duration)) or duration <= 0:
         raise ValueError("Video duration must be a finite positive value.")
@@ -66,7 +72,7 @@ def build_chapters(op: dict | None, ed: dict | None, duration: float) -> list[di
         segments.append((label, start, end, str(segment.get("name") or label)))
     if not segments:
         raise ValueError("There are no detected OP/ED segments to inject.")
-    segments.sort(key=lambda x: x[1])
+    segments.sort(key=lambda item: item[1])
     if len(segments) == 2 and segments[0][2] > segments[1][1]:
         raise ValueError("Opening and Ending segments overlap.")
 
@@ -74,27 +80,47 @@ def build_chapters(op: dict | None, ed: dict | None, duration: float) -> list[di
     cursor = 0.0
     for kind, start, end, name in segments:
         if start > cursor:
-            chapters.append({"title": "Prologue" if cursor == 0 else "Episode", "start": cursor, "end": start})
-        chapters.append({"title": name if kind == "Opening" else name, "start": start, "end": end})
+            # Keep the CLI's chapter naming: material before an OP is a
+            # Prologue; the body between OP and ED is Episode.
+            title = "Prologue" if cursor == 0 and kind == "Opening" else "Episode"
+            chapters.append({"title": title, "start": cursor, "end": start})
+        chapters.append({"title": name, "start": start, "end": end})
         cursor = end
+
     if cursor < duration:
-        chapters.append({"title": "Episode", "start": cursor, "end": duration})
+        # The CLI called the tail after a detected ED "Ending". Without an
+        # ED, the remaining material is still part of the episode.
+        tail_title = "Ending" if ed is not None else "Episode"
+        chapters.append({"title": tail_title, "start": cursor, "end": duration})
+
     if not chapters or chapters[0]["start"] != 0:
         raise ValueError("Chapter plan does not cover the start of the file.")
     return chapters
 
 
 def write_chapters_xml(chapters: list[dict[str, Any]], path: Path) -> None:
-    rows = ['<?xml version="1.0" encoding="UTF-8"?>', '<Chapters><EditionEntry>']
+    rows = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        "<Chapters>",
+        "<EditionEntry>",
+        "<EditionFlagHidden>0</EditionFlagHidden>",
+        "<EditionFlagDefault>1</EditionFlagDefault>",
+        f"<EditionUID>{_chapter_uid()}</EditionUID>",
+    ]
     for chapter in chapters:
         rows.extend([
             "<ChapterAtom>",
             f"<ChapterTimeStart>{_format_time(float(chapter['start']))}</ChapterTimeStart>",
             f"<ChapterTimeEnd>{_format_time(float(chapter['end']))}</ChapterTimeEnd>",
-            "<ChapterDisplay>", f"<ChapterString>{escape(str(chapter['title']))}</ChapterString>",
-            "<ChapterLanguage>eng</ChapterLanguage>", "</ChapterDisplay>", "</ChapterAtom>",
+            f"<ChapterUID>{_chapter_uid()}</ChapterUID>",
+            "<ChapterDisplay>",
+            f"<ChapterString>{escape(str(chapter['title']))}</ChapterString>",
+            "<ChapterLanguage>spa</ChapterLanguage>",
+            "<ChapLanguageIETF>es</ChapLanguageIETF>",
+            "</ChapterDisplay>",
+            "</ChapterAtom>",
         ])
-    rows.extend(["</EditionEntry></Chapters>"])
+    rows.extend(["</EditionEntry>", "</Chapters>"])
     path.write_text("\n".join(rows), encoding="utf-8")
 
 

@@ -23,6 +23,10 @@ dist/
 !.env.example
 
 # Local application configuration and data
+/plugins/
+/Templates/
+/template/
+/templates/
 config/config.json
 var/
 /database/
