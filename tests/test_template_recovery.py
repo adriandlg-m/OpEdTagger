@@ -193,6 +193,17 @@ def test_wav_validation_excludes_corrupt_files_before_analysis(tmp_path):
         _validate_wav_templates([invalid], "Example Show")
 
 
+def test_current_anime_themes_graphql_endpoint_and_schema_are_used():
+    from backend.services import template_service
+
+    assert template_service.GRAPHQL_URL == "https://graphql.animethemes.moe/"
+    assert "search(search: $q, first: $first)" in template_service.SEARCH_QUERY
+    assert "animethemes" in template_service.THEMES_QUERY
+    assert "animethemeentries" in template_service.THEMES_QUERY
+    assert "basename" in template_service.THEMES_QUERY
+    assert "themes {" not in template_service.THEMES_QUERY
+
+
 def test_template_download_creates_both_folders_and_preserves_existing_song_files(tmp_path, monkeypatch):
     from backend.services import template_service
 
@@ -227,7 +238,8 @@ def test_template_download_creates_both_folders_and_preserves_existing_song_file
     def fake_download(_url, target, on_progress=None):
         target.write_bytes(b"downloaded-video")
         if on_progress:
-            on_progress(target.stat().st_size, target.stat().st_size)
+            on_progress(5, 15)
+            on_progress(15, 15)
 
     monkeypatch.setattr(template_service, "_download", fake_download)
 
@@ -245,13 +257,22 @@ def test_template_download_creates_both_folders_and_preserves_existing_song_file
 
     monkeypatch.setattr(template_service, "prepare_song_templates", fake_prepare)
 
-    result = template_service.download_selected_templates("Example Show", "example-show")
+    progress_events = []
+    result = template_service.download_selected_templates(
+        "Example Show",
+        "example-show",
+        progress=lambda stage, percent, item: progress_events.append((stage, percent, item)),
+    )
     series_dir = template_root / "Example Show"
 
     assert result["downloaded"] == 1
     assert result["song_templates"] == 2
     assert result["audio_preparation_error"] is None
     assert result["audio_preparation_warning"] is None
+    assert any(
+        stage == "downloading_templates" and "Opening OP1" in item and "5.0 B / 15.0 B" in item
+        for stage, _percent, item in progress_events
+    )
     assert (series_dir / "video_files" / "Example Show - OP1.webm").read_bytes() == b"downloaded-video"
     assert (series_dir / "songs_files" / "manual-reference.wav").read_bytes() == b"manual-wav"
     assert (series_dir / "songs_files" / "Example Show - OP1.wav").read_bytes() == b"generated-wav"
