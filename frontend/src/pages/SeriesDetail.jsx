@@ -30,6 +30,21 @@ function confidenceLabel(band) {
   })[band] || 'Sin evaluar';
 }
 
+function ConfidenceMetric({ label, score, band, detail }) {
+  return (
+    <div className={`confidence-metric confidence-${String(band || 'UNASSESSED').toLowerCase()}`}>
+      <div className="confidence-metric-heading">
+        <span>{label}</span>
+        <strong>{score === null ? 'Sin evaluar' : `${score}/100 · ${confidenceLabel(band)}`}</strong>
+      </div>
+      <div className="confidence-metric-track">
+        <span style={{ width: score === null ? '0%' : `${score}%` }} />
+      </div>
+      {detail && <small>{detail}</small>}
+    </div>
+  );
+}
+
 function ConfidenceDetail({ label, segment, original, anomaly }) {
   if (!segment && !original) return null;
   if (!segment && original) {
@@ -45,10 +60,12 @@ function ConfidenceDetail({ label, segment, original, anomaly }) {
       </div>
     );
   }
-  const score = Number.isFinite(Number(segment.confidence_score))
-    ? Number(segment.confidence_score)
-    : null;
-  const band = segment.confidence_band || 'UNASSESSED';
+  const matchScore = typeof segment.match_confidence_score === 'number'
+    ? segment.match_confidence_score : null;
+  const temporalScore = typeof segment.temporal_precision_score === 'number'
+    ? segment.temporal_precision_score : null;
+  const matchBand = segment.match_confidence_band || 'UNASSESSED';
+  const temporalBand = segment.temporal_precision_band || 'UNASSESSED';
   const factors = segment.confidence_factors || {};
   const reasons = Array.isArray(factors.reasons) ? factors.reasons : [];
   const changed = original && (
@@ -56,21 +73,32 @@ function ConfidenceDetail({ label, segment, original, anomaly }) {
     || Number(original.end) !== Number(segment.end)
   );
   return (
-    <div className={`confidence-detail confidence-${String(band).toLowerCase()}`}>
+    <div className="confidence-detail">
       <div className="confidence-detail-heading">
         <strong>{label}</strong>
-        {score === null
-          ? <span>Confianza sin evaluar</span>
-          : <span className="confidence-detail-score">{score}/100 · {confidenceLabel(band)}</span>}
         {segment.manual_verified && <span className="confidence-manual-tag">Verificado manualmente</span>}
-        {anomaly && <span className="confidence-anomaly-tag">Anomalía temporal</span>}
+        {anomaly && <span className="confidence-anomaly-tag">Anomalía temporal · revisar contexto</span>}
       </div>
-      {score !== null && <div className="confidence-detail-track"><span style={{ width: `${score}%` }} /></div>}
+      <div className="confidence-detail-metrics">
+        <ConfidenceMetric
+          label="Confianza de coincidencia"
+          score={matchScore}
+          band={matchBand}
+          detail="Evalúa si el template detectado corresponde al OP/ED."
+        />
+        <ConfidenceMetric
+          label="Precisión temporal estimada"
+          score={temporalScore}
+          band={temporalBand}
+          detail="Evalúa qué tan definido está el instante de inicio."
+        />
+      </div>
       <div className="confidence-factor-list">
         {factors.similarity !== null && factors.similarity !== undefined && <span>Similitud {Number(factors.similarity).toFixed(3)}</span>}
-        {factors.peak_clarity !== null && factors.peak_clarity !== undefined && <span>Claridad {Number(factors.peak_clarity).toFixed(3)}</span>}
         {factors.template_margin !== null && factors.template_margin !== undefined && <span>Separación de templates {Number(factors.template_margin).toFixed(3)}</span>}
-        {factors.temporal_consistency !== null && factors.temporal_consistency !== undefined && <span>Consistencia {Number(factors.temporal_consistency).toFixed(3)}</span>}
+        {factors.peak_clarity !== null && factors.peak_clarity !== undefined && <span>Distinción de otras posiciones {Number(factors.peak_clarity).toFixed(3)}</span>}
+        {factors.peak_width_seconds !== null && factors.peak_width_seconds !== undefined && <span>Ancho del pico {Number(factors.peak_width_seconds).toFixed(3)} s</span>}
+        {factors.temporal_consistency !== null && factors.temporal_consistency !== undefined && <span>Consistencia entre episodios {Number(factors.temporal_consistency).toFixed(3)}</span>}
       </div>
       {reasons.length > 0 && <ul>{reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul>}
       {changed && <p className="confidence-original-value">Detección original: {formatTimestamp(original.start)}–{formatTimestamp(original.end)}</p>}
@@ -136,12 +164,7 @@ function EpisodeRow({
     } catch (error) { onToast(error.message, 'error'); }
   };
 
-  const confidenceText = (segment) => {
-    if (!segment) return 'Sin coincidencia';
-    if (!Number.isFinite(Number(segment.confidence_score))) return 'Confianza sin evaluar';
-    return `Confianza ${Number(segment.confidence_score)}/100 · ${confidenceLabel(segment.confidence_band)}`;
-  };
-  const bandClass = (segment) => `confidence-inline confidence-${String(segment?.confidence_band || 'unassessed').toLowerCase()}`;
+  const bandClass = (band) => `confidence-inline confidence-${String(band || 'unassessed').toLowerCase()}`;
 
   return (
     <article className={`episode-row ${isOutlier ? 'episode-outlier' : ''} ${isProcessing ? 'episode-row-processing' : ''}`}>
@@ -164,12 +187,22 @@ function EpisodeRow({
         <div className="episode-segment">
           <span className="segment-label">Opening</span>
           <strong>{episode.opening}</strong>
-          <small className={bandClass(episode.op)}>{confidenceText(episode.op)}</small>
+          <div className="episode-segment-confidence">
+            {episode.op ? <>
+              <small className={bandClass(episode.op.match_confidence_band)}>Coincidencia {episode.op.match_confidence_score ?? '—'}/100</small>
+              <small className={bandClass(episode.op.temporal_precision_band)}>Precisión temporal {episode.op.temporal_precision_score ?? '—'}/100</small>
+            </> : <small className="confidence-inline confidence-unassessed">Sin coincidencia</small>}
+          </div>
         </div>
         <div className="episode-segment">
           <span className="segment-label">Ending</span>
           <strong>{episode.ending}</strong>
-          <small className={bandClass(episode.ed)}>{confidenceText(episode.ed)}</small>
+          <div className="episode-segment-confidence">
+            {episode.ed ? <>
+              <small className={bandClass(episode.ed.match_confidence_band)}>Coincidencia {episode.ed.match_confidence_score ?? '—'}/100</small>
+              <small className={bandClass(episode.ed.temporal_precision_band)}>Precisión temporal {episode.ed.temporal_precision_score ?? '—'}/100</small>
+            </> : <small className="confidence-inline confidence-unassessed">Sin coincidencia</small>}
+          </div>
         </div>
         <div className="episode-status"><StatusBadge status={badgeStatus} /></div>
         <div className="episode-row-actions"><button className="icon-button expand-button" onClick={() => setExpanded((value) => !value)} aria-label="Mostrar detalles"><ChevronDown size={17} /></button></div>

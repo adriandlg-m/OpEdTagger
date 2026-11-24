@@ -206,7 +206,7 @@ def _as_record(candidate: dict | None) -> dict | None:
         return None
     record = {"name": candidate["name"], "start": float(candidate["start"]),
               "end": float(candidate["end"]), "score": float(candidate["score"])}
-    for key in ("similarity_score", "peak_prominence", "template_frames", "template_margin"):
+    for key in ("similarity_score", "peak_prominence", "peak_width_seconds", "template_frames", "template_margin"):
         if key in candidate:
             record[key] = candidate[key]
     return record
@@ -358,8 +358,13 @@ def _apply_anomalies(series_name: str) -> None:
                     if current_segment is not None:
                         current_segment = {
                             **current_segment,
+                            "match_confidence_score": assessed.get("match_confidence_score"),
+                            "match_confidence_band": assessed.get("match_confidence_band"),
+                            "temporal_precision_score": assessed.get("temporal_precision_score"),
+                            "temporal_precision_band": assessed.get("temporal_precision_band"),
                             "confidence_score": assessed.get("confidence_score"),
                             "confidence_band": assessed.get("confidence_band"),
+                            "temporal_outlier": assessed.get("temporal_outlier", False),
                             "confidence_factors": assessed.get("confidence_factors"),
                         }
                     original_segment = assessed

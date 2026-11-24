@@ -40,7 +40,7 @@
 | Verificación exacta de capítulos por cantidad, títulos y tiempos | Verificada con FFprobe real sobre un MKV sintético; además se probó el rollback simulado |
 | Persistencia y presentación de fallos por episodio | Verificada con fixture aislado |
 | Protección de rutas y symlinks | Verificada con fixtures |
-| Índice de confianza OP/ED 0–100 y bandas | Pruebas de alta, media, baja, anomalía, métricas ausentes y revisión agregada |
+| Índices independientes 0–100 de confianza de coincidencia y precisión temporal OP/ED | Pruebas de ambas dimensiones, umbrales, métricas ausentes, anomalías sin penalización artificial y agregación de revisión |
 | Snapshot original e historial de correcciones/retiradas | Migración SQLite y prueba de persistencia manual |
 | Cola de revisión y selección de episodios elegibles | Frontend tests/build; validación visual Windows pendiente |
 | Inyección masiva secuencial con backup/verificación por MKV | Pruebas de lógica/job; validación real en Windows con MKV representativos pendiente |
@@ -60,7 +60,8 @@ La rama `feature/recover-cli-workflows` incorpora nuevas pruebas para:
 - El endpoint y esquema GraphQL actuales de AnimeThemes, variables de búsqueda/detalle, mapeo de `animethemes`/`animethemeentries` y manejo de cancelación.
 - El reporte de progreso por Opening/Ending y bytes transferidos, barra indeterminada durante consultas/tamaños desconocidos y progreso monotónico entre preparación y análisis.
 - La descarga de FFmpeg/FFprobe en segundo plano y la instalación diferida de MKVToolNix al inyectar capítulos.
-- La protección del contrato de detección OP/ED (`0.68`, 22.050 Hz, chroma, correlación, filtro ED del 70 %) y las nuevas métricas auxiliares de confianza que no alteran la selección del ganador.
+- La protección del contrato de detección OP/ED (`0.68`, 22.050 Hz, chroma, correlación, filtro ED del 70 %) y la medición adicional de anchura del pico de alineación, sin alterar la aceptación ni la selección del ganador.
+- Dos índices heurísticos independientes: confianza de coincidencia (similitud y margen de template) y precisión temporal estimada (anchura del pico al 95 % y distinción frente a otras posiciones). La consistencia entre episodios y las anomalías se muestran como contexto; ya no fuerzan un techo numérico.
 - La extracción segura de ZIP y la recuperación de carpetas de plugins tras una interrupción.
 - Los nombres de capítulos históricos y el idioma `spa/es`, manteniendo backup, verificación y rollback.
 
