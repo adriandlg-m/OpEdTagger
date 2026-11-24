@@ -34,6 +34,10 @@ def test_successful_injection_refreshes_episode_file_metadata(tmp_path, monkeypa
     from core.fingerprints import ANALYZER_VERSION, file_fingerprint
     from backend.api.routers import chapters
 
+    # MKVToolNix provisioning is a separate Windows integration; this API
+    # regression test stubs it and focuses on post-injection metadata updates.
+    monkeypatch.setattr(chapters, "ensure_chapter_plugins", lambda _cfg: {"status": "ready"})
+
     library = tmp_path / "library"
     series_dir = library / "Example"
     series_dir.mkdir(parents=True)
