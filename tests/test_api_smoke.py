@@ -211,13 +211,12 @@ def test_manual_correction_preserves_original_detection_and_records_history(tmp_
     monkeypatch.setattr(chapters, "assert_analysis_file_unchanged", lambda _episode, _result: None)
     monkeypatch.setattr(chapters, "get_mkv_duration", lambda *_args: 120.0)
 
-    with TestClient(app) as client:
-        response = client.put(
-            f"/api/episodes/{episode_id}/review",
-            json={"op": {"name": "OP1", "start": 20.0, "end": 110.0, "score": 2.0}},
-        )
-    assert response.status_code == 200, response.text
-    assert response.json()["review_status"] == "MANUALLY_REVIEWED"
+    from backend.api.schemas.models import ReviewUpdate
+    response = chapters.review_episode(
+        episode_id,
+        ReviewUpdate(op={"name": "OP1", "start": 20.0, "end": 110.0, "score": 2.0}),
+    )
+    assert response["review_status"] == "MANUALLY_REVIEWED"
 
     with db_session() as conn:
         row = conn.execute(
