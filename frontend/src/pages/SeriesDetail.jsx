@@ -282,7 +282,13 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
       const result = await api.downloadTemplates(series.name, candidate.slug);
       setTemplatePanel(false);
       await onRefresh?.();
-      onToast(`Templates descargados: ${result.downloaded} archivo(s) para ${candidate.title_english || candidate.title_romaji || candidate.slug}.`, 'success');
+      const preparedSongs = Number(result.song_templates || 0);
+      const templateMessage = `Templates descargados: ${result.downloaded} archivo(s) · WAV disponibles: ${preparedSongs}.`;
+      if (result.audio_preparation_error || preparedSongs === 0) {
+        onToast(`${templateMessage} ${result.audio_preparation_error || 'No se generaron WAV; revisa la disponibilidad de FFmpeg.'}`, 'warning');
+      } else {
+        onToast(`${templateMessage} ${candidate.title_english || candidate.title_romaji || candidate.slug}`, 'success');
+      }
     } catch (error) {
       setTemplateError(error.message || 'No se pudieron descargar los templates.');
     } finally {

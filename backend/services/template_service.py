@@ -19,6 +19,7 @@ except ImportError:  # Fallback keeps the API usable until Python dependencies a
     _CURL_CFFI_AVAILABLE = False
 
 from backend.infrastructure.config import load_config
+from core.analyzer import prepare_song_templates
 
 logger = logging.getLogger(__name__)
 _TEMPLATE_LOCK = threading.RLock()
@@ -272,6 +273,24 @@ def _download_selected_templates_impl(
             if progress:
                 progress(index, len(tasks), target.name)
 
+        # Match the CLI workflow: once AnimeThemes videos are synchronized,
+        # prepare their WAV counterparts immediately with the existing audio
+        # conversion function. The OP/ED detector itself is not involved here.
+        song_templates = []
+        audio_preparation_error = None
+        try:
+            cfg = load_config()
+            song_templates = prepare_song_templates(
+                staging,
+                Path(cfg["plugins_path"]).expanduser().resolve(),
+                on_template_progress=progress,
+            )
+        except Exception as exc:
+            # Keep the downloaded source videos usable. A later analysis can
+            # retry WAV preparation after the missing multimedia tool is fixed.
+            audio_preparation_error = str(exc)
+            logger.exception("Could not prepare WAV templates for %s.", series_name)
+
         manifest = {
             "provider": "AnimeThemes",
             "anime_slug": slug,
@@ -304,6 +323,8 @@ def _download_selected_templates_impl(
             "files": [str(target_dir / "video_files" / Path(path).name) for path in successes],
             "video_files_dir": str(target_dir / "video_files"),
             "songs_files_dir": str(target_dir / "songs_files"),
+            "song_templates": len(song_templates),
+            "audio_preparation_error": audio_preparation_error,
             "manifest": str(target_dir / "template_manifest.json"),
         }
     except Exception:
