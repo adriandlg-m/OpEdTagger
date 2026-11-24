@@ -62,12 +62,13 @@ def test_plugin_directory_recovery_removes_previous_after_new_install_exists(tmp
 
 
 
-def _tool_snapshot(*, ffmpeg=True, ffprobe=True, mkvmerge=False, mkvpropedit=False):
+def _tool_snapshot(*, ffmpeg=True, ffprobe=True, mkvmerge=False, mkvpropedit=False, mkvextract=False):
     values = {
         "ffmpeg": ffmpeg,
         "ffprobe": ffprobe,
         "mkvmerge": mkvmerge,
         "mkvpropedit": mkvpropedit,
+        "mkvextract": mkvextract,
     }
     return {
         name: {"available": available, "path": f"/plugins/{name}", "version": "test"}
@@ -107,6 +108,7 @@ def test_chapter_setup_installs_mkvtoolnix_on_demand(tmp_path, monkeypatch):
     def install_mkv(_root):
         tools["mkvmerge"]["available"] = True
         tools["mkvpropedit"]["available"] = True
+        tools["mkvextract"]["available"] = True
 
     monkeypatch.setattr(plugin_manager, "_inspect_local_tools", inspect)
     monkeypatch.setattr(plugin_manager, "_install_mkvtoolnix", install_mkv)
@@ -116,6 +118,7 @@ def test_chapter_setup_installs_mkvtoolnix_on_demand(tmp_path, monkeypatch):
     assert state["status"] == "ready"
     assert state["installed"]["mkvmerge"]["available"]
     assert state["installed"]["mkvpropedit"]["available"]
+    assert state["installed"]["mkvextract"]["available"]
 
 
 
@@ -148,5 +151,5 @@ def test_plugin_status_reports_local_paths_and_missing_tools(tmp_path, monkeypat
     monkeypatch.setattr(plugin_manager, "load_config", lambda: {"plugins_path": str(tmp_path / "plugins")})
     status = plugin_manager.plugin_manager_status()
     assert status["plugins_path"] == str(tmp_path / "plugins")
-    assert set(status["installed"]) == {"ffmpeg", "ffprobe", "mkvmerge", "mkvpropedit"}
+    assert set(status["installed"]) == {"ffmpeg", "ffprobe", "mkvmerge", "mkvpropedit", "mkvextract"}
     assert not any(item["available"] for item in status["installed"].values())

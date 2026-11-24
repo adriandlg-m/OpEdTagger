@@ -19,6 +19,12 @@ def test_local_api_health_dashboard_and_settings():
         assert settings.status_code == 200
         assert "database_path" in settings.json()
 
+        backups = client.get("/api/settings/backups")
+        assert backups.status_code == 200
+        assert "backup_path" in backups.json()
+        assert "recovery_count" in backups.json()
+        assert "available_free_bytes" in backups.json()
+
         logs = client.get("/api/logs")
         assert logs.status_code == 200
         assert isinstance(logs.json()["logs"], list)

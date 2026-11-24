@@ -25,6 +25,8 @@ def test_default_config_keeps_user_data_separate_and_uses_project_root_for_templ
     assert Path(config["database_path"]).parent == app_data
     assert Path(config["template_path"]) == root / "templates"
     assert Path(config["plugins_path"]) == root / "plugins"
+    assert Path(config["backup_path"]) == root / "backups"
+    assert (root / "backups" / "temporary").is_dir()
     assert (app_data / "config.json").exists()
 
 
@@ -169,3 +171,38 @@ def test_scan_library_reconciles_removed_episodes_and_series(tmp_path, monkeypat
     with db_session() as conn:
         assert conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM series").fetchone()[0] == 1
+
+
+
+def test_load_config_migrates_empty_legacy_backup_folder_to_project_root(tmp_path, monkeypatch):
+    app_data, root = _isolate_paths(monkeypatch, tmp_path)
+    legacy_backups = app_data / "backups"
+    legacy_backups.mkdir(parents=True)
+    app_data.mkdir(parents=True, exist_ok=True)
+    (app_data / "config.json").write_text(json.dumps({
+        "backup_path": str(legacy_backups),
+    }), encoding="utf-8")
+
+    config = load_config()
+
+    assert Path(config["backup_path"]) == root / "backups"
+    persisted = json.loads((app_data / "config.json").read_text(encoding="utf-8"))
+    assert persisted["_backup_layout_version"] == 1
+
+
+def test_load_config_preserves_nonempty_legacy_backup_folder_without_copying_or_deleting(tmp_path, monkeypatch):
+    app_data, root = _isolate_paths(monkeypatch, tmp_path)
+    legacy_backups = app_data / "backups"
+    legacy_backups.mkdir(parents=True)
+    old_backup = legacy_backups / "episode.backup-abc.mkv"
+    old_backup.write_bytes(b"large original backup")
+    app_data.mkdir(parents=True, exist_ok=True)
+    (app_data / "config.json").write_text(json.dumps({
+        "backup_path": str(legacy_backups),
+    }), encoding="utf-8")
+
+    config = load_config()
+
+    assert Path(config["backup_path"]) == legacy_backups
+    assert old_backup.read_bytes() == b"large original backup"
+    assert not (root / "backups" / "episode.backup-abc.mkv").exists()
