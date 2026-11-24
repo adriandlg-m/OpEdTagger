@@ -117,6 +117,10 @@ def _graphql_request(
             if not isinstance(data, dict):
                 raise RuntimeError("AnimeThemes respondió sin el objeto 'data' de GraphQL.")
             return payload
+        except InterruptedError:
+            # A cancellation requested by the user is not a network failure;
+            # do not retry a GraphQL request after the job was cancelled.
+            raise
         except Exception as exc:
             last_error = exc
             logger.warning(
