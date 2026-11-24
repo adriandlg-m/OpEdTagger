@@ -118,15 +118,19 @@ function ConfidenceDetail({ label, segment, original, anomaly }) {
 }
 
 function EpisodeRow({
-  episode, onOpen, selected = false, onToggleSelection, processingFile = null,
+  episode, onOpen, selected = false, onToggleSelection, processingFile = null, showOutliers = true,
 }) {
   const canInject = isInjectionEligible(episode);
   const reviewLocked = ['IN_PROGRESS', 'RECOVERY_REQUIRED'].includes(episode.injection_status);
   const injected = episode.injection_status === 'SUCCEEDED';
   const isProcessing = processingFile && episode.file_name === processingFile;
-  const badgeStatus = episode.review_status === 'REVIEW_RECOMMENDED' && canInject
-    ? 'Listo · revisar'
-    : injected ? 'Listo' : episode.status;
+  const badgeStatus = !showOutliers && episode.status === 'Outlier'
+    ? (episode.review_status === 'PENDING' ? 'Revisión necesaria'
+      : canInject && episode.review_status === 'REVIEW_RECOMMENDED' ? 'Listo · revisar'
+        : injected ? 'Listo' : 'Preparado')
+    : episode.review_status === 'REVIEW_RECOMMENDED' && canInject
+      ? 'Listo · revisar'
+      : injected ? 'Listo' : episode.status;
   const bandClass = (band) => `confidence-inline confidence-${String(band || 'unassessed').toLowerCase()}`;
 
   const renderCompactConfidence = (segment) => {
@@ -608,35 +612,6 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     && activeJob.series_name === series.name
     && ['queued', 'running', 'cancellation_requested'].includes(activeJob.status);
   const isInjectionJob = activeJob?.kind === 'injection';
-  const eligibleEpisodes = episodes.filter(isInjectionEligible);
-  const selectedEligibleEpisodes = eligibleEpisodes.filter((episode) => selectedEpisodeIds.has(episode.id));
-  const confidenceSummary = useMemo(() => {
-    const createCounts = () => ({ HIGH: 0, MEDIUM: 0, LOW: 0, UNASSESSED: 0 });
-    const summary = {
-      detections: 0,
-      match: createCounts(),
-      temporal: createCounts(),
-    };
-    for (const episode of episodes) {
-      for (const segment of [episode.op, episode.ed]) {
-        if (!segment) continue;
-        summary.detections += 1;
-        const matchBand = summary.match[segment.match_confidence_band] === undefined
-          ? 'UNASSESSED' : segment.match_confidence_band;
-        const temporalBand = summary.temporal[segment.temporal_precision_band] === undefined
-          ? 'UNASSESSED' : segment.temporal_precision_band;
-        summary.match[matchBand] += 1;
-        summary.temporal[temporalBand] += 1;
-      }
-    }
-    return summary;
-  }, [episodes]);
-  const reviewQueueCount = episodes.filter((episode) =>
-    ['PENDING', 'REVIEW_RECOMMENDED'].includes(episode.review_status)
-  ).length;
-  const processingFile = ['analyzing_episodes', 'injecting_chapters'].includes(activeJob?.stage)
-    ? activeJob.current_item
-    : null;
   const activeStageLabel = ({
     queued: 'En cola',
     initializing: 'Iniciando análisis',
@@ -1088,6 +1063,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
                     selected={selectedEpisodeIds.has(episode.id)}
                     onToggleSelection={toggleEpisodeSelection}
                     processingFile={processingFile}
+                    showOutliers={showOutliers}
                   />
                 ))}
                 {!childFolders.length && !directEpisodes.length && (
@@ -1105,10 +1081,6 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
             </div>
           </>
         )}
-      </section>
-    </div>
-  );
-
       </section>
     </div>
   );
