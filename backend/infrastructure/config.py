@@ -34,6 +34,12 @@ def config_path() -> Path:
     return Path(override).expanduser().resolve() if override else app_data_dir() / "config.json"
 
 
+def default_backup_path() -> Path:
+    """Prefer a visible portable-project folder, falling back when it is not writable."""
+    root = project_root()
+    return (root / "backups") if os.access(root, os.W_OK) else (app_data_dir() / "backups")
+
+
 def default_config() -> dict[str, Any]:
     data_dir = app_data_dir()
     root = project_root()
@@ -42,7 +48,7 @@ def default_config() -> dict[str, Any]:
         "template_path": str(root / "templates"),
         "plugins_path": str(root / "plugins"),
         "database_path": str(data_dir / "opedtagger.sqlite3"),
-        "backup_path": str(data_dir / "backups"),
+        "backup_path": str(default_backup_path()),
         "log_path": str(data_dir / "logs" / "opedtagger.log"),
         "max_workers": 1,
         "auto_download_templates": False,
@@ -182,6 +188,29 @@ def _migrate_legacy_storage(config: dict[str, Any], stored: dict[str, Any]) -> b
     return False
 
 
+def _migrate_backup_location(config: dict[str, Any], stored: dict[str, Any]) -> bool:
+    """Adopt the portable backup folder only when the legacy default is empty."""
+    try:
+        version = int(stored.get("_backup_layout_version", 0) or 0)
+    except (TypeError, ValueError):
+        version = 0
+    if version >= 1:
+        return False
+    old_default = app_data_dir() / "backups"
+    raw = stored.get("backup_path")
+    if raw:
+        configured = Path(str(raw)).expanduser()
+        if not configured.is_absolute():
+            configured = project_root() / configured
+        if _same_path(configured, old_default):
+            has_existing_data = old_default.is_dir() and any(old_default.iterdir())
+            if not has_existing_data:
+                config["backup_path"] = str(default_backup_path())
+            # A non-empty old backup folder is preserved and remains configured.
+    config["_backup_layout_version"] = 1
+    return True
+
+
 def load_config() -> dict[str, Any]:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,10 +228,11 @@ def load_config() -> dict[str, Any]:
         merged = default_config()
         merged.update(stored)
         migrated = _migrate_legacy_storage(merged, stored)
+        backup_migrated = _migrate_backup_location(merged, stored)
 
         # Fresh installations also import the original CLI folders, if they
         # happen to exist in the project root.
-        if not path.exists() or migrated:
+        if not path.exists() or migrated or backup_migrated:
             _persist_config(path, merged)
         return merged
 

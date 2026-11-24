@@ -11,6 +11,8 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 from core.analyzer import _binary
+from core.backup_manager import assert_backup_space, ensure_backup_layout, move_transaction_to_recovery, write_transaction_manifest
+from core.fingerprints import file_fingerprint
 
 
 def _find_tool(plugins_path: Path, name: str) -> Path:
@@ -172,7 +174,258 @@ def verify_written_chapters(mkv_path: Path, expected: list[dict[str, Any]], plug
             raise RuntimeError(f"Post-injection verification failed: chapter {index} does not match the approved title or timestamps.")
 
 
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _restore_from_transaction(
+    mkv_path: Path, transaction_dir: Path, manifest: dict[str, Any],
+) -> None:
+    backup = transaction_dir / str(manifest.get("backup_file") or "original.mkv")
+    expected_fingerprint = str(manifest.get("original_fingerprint") or "")
+    if not backup.is_file():
+        raise RuntimeError("The temporary original MKV backup is missing.")
+    if backup.stat().st_size != int(manifest.get("original_size") or -1):
+        raise RuntimeError("The temporary original MKV backup has an unexpected size.")
+    if expected_fingerprint and file_fingerprint(backup) != expected_fingerprint:
+        raise RuntimeError("The temporary original MKV backup failed its integrity check.")
+
+    restore_tmp = mkv_path.with_name(mkv_path.name + f".{uuid.uuid4().hex[:8]}.restore")
+    try:
+        shutil.copy2(backup, restore_tmp)
+        if restore_tmp.stat().st_size != backup.stat().st_size:
+            raise RuntimeError("The restored temporary copy has an unexpected size.")
+        if expected_fingerprint and file_fingerprint(restore_tmp) != expected_fingerprint:
+            raise RuntimeError("The restored temporary copy failed its integrity check.")
+        restore_tmp.replace(mkv_path)
+        if expected_fingerprint and file_fingerprint(mkv_path) != expected_fingerprint:
+            raise RuntimeError("The restored MKV did not match the original fingerprint.")
+    finally:
+        restore_tmp.unlink(missing_ok=True)
+
+
 def inject_chapters_with_backup(
+    mkv_path: Path, chapters: list[dict[str, Any]], plugins_path: Path, backup_root: Path,
+    *, replace_existing: bool, episode_id: int | None = None,
+) -> dict[str, Any]:
+    """Inject chapters with a temporary full backup and post-write verification."""
+    from xml.etree import ElementTree
+    from core.backup_manager import (
+        assert_backup_space, ensure_backup_layout, move_transaction_to_recovery,
+        write_transaction_manifest,
+    )
+
+    mkv_path = mkv_path.expanduser().resolve()
+    plugins_path = plugins_path.expanduser().resolve()
+    backup_root = backup_root.expanduser().resolve()
+    if not mkv_path.is_file() or mkv_path.suffix.lower() != ".mkv":
+        raise FileNotFoundError("The target MKV file does not exist.")
+
+    existing = has_existing_chapters(mkv_path, plugins_path)
+    if existing and not replace_existing:
+        raise ValueError("The MKV already contains chapters. Explicitly confirm that existing chapters may be replaced.")
+
+    mkvpropedit = _find_tool(plugins_path, "mkvpropedit")
+    mkvextract = _find_tool(plugins_path, "mkvextract") if existing else None
+    assert_backup_space(mkv_path, backup_root)
+    directories = ensure_backup_layout(backup_root)
+    transaction_id = uuid.uuid4().hex
+    transaction_dir = directories["temporary"] / transaction_id
+    transaction_dir.mkdir(parents=True, exist_ok=False)
+    backup = transaction_dir / "original.mkv"
+    original_chapters = transaction_dir / "original_chapters.xml"
+    new_chapters = transaction_dir / "new_chapters.xml"
+
+    original_stat = mkv_path.stat()
+    original_fingerprint = file_fingerprint(mkv_path)
+    manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "transaction_id": transaction_id,
+        "episode_id": episode_id,
+        "file_name": mkv_path.name,
+        "target_path": str(mkv_path),
+        "backup_file": "original.mkv",
+        "original_size": original_stat.st_size,
+        "original_mtime_ns": original_stat.st_mtime_ns,
+        "original_fingerprint": original_fingerprint,
+        "had_existing_chapters": existing,
+        "phase": "PREPARING",
+    }
+    write_transaction_manifest(transaction_dir, manifest)
+    modification_started = False
+    try:
+        shutil.copy2(mkv_path, backup)
+        if backup.stat().st_size != original_stat.st_size:
+            raise RuntimeError("The temporary backup size does not match the original MKV.")
+        if file_fingerprint(backup) != original_fingerprint:
+            raise RuntimeError("The temporary backup failed its integrity check.")
+        current_stat = mkv_path.stat()
+        if (current_stat.st_size, current_stat.st_mtime_ns) != (original_stat.st_size, original_stat.st_mtime_ns):
+            raise RuntimeError("The source MKV changed while its temporary backup was being created.")
+
+        if existing:
+            assert mkvextract is not None
+            extract = subprocess.run(
+                [str(mkvextract), str(mkv_path), "chapters", str(original_chapters)],
+                capture_output=True, text=True, timeout=300, check=False,
+            )
+            if extract.returncode != 0:
+                raise RuntimeError(
+                    "Could not preserve the existing chapter structure as XML: "
+                    f"{(extract.stderr or extract.stdout or '')[-800:]}"
+                )
+            if not original_chapters.is_file() or original_chapters.stat().st_size == 0:
+                raise RuntimeError("MKVToolNix did not produce the original-chapters XML archive.")
+            try:
+                exported_root = ElementTree.parse(original_chapters).getroot()
+            except ElementTree.ParseError as exc:
+                raise RuntimeError("The exported original-chapters XML is invalid.") from exc
+            if exported_root.tag != "Chapters":
+                raise RuntimeError("The exported original-chapters XML has an unexpected root element.")
+
+        manifest["phase"] = "BACKUP_READY"
+        manifest["backup_verified"] = True
+        write_transaction_manifest(transaction_dir, manifest)
+
+        write_chapters_xml(chapters, new_chapters)
+        manifest["phase"] = "INJECTING"
+        write_transaction_manifest(transaction_dir, manifest)
+        modification_started = True
+
+        result = subprocess.run(
+            [str(mkvpropedit), str(mkv_path), "--chapters", str(new_chapters)],
+            capture_output=True, text=True, timeout=1800, check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"mkvpropedit failed: {(result.stderr or result.stdout)[-1000:]}")
+        verify_written_chapters(mkv_path, chapters, plugins_path)
+
+        manifest["phase"] = "VERIFIED"
+        manifest["verified_chapter_count"] = len(chapters)
+        write_transaction_manifest(transaction_dir, manifest)
+        return {
+            "transaction_id": transaction_id,
+            "transaction_path": str(transaction_dir),
+            "backup_path": str(backup),
+            "original_chapters_path": str(original_chapters) if existing else None,
+            "had_existing_chapters": existing,
+            "target_path": str(mkv_path),
+            "episode_id": episode_id,
+            "phase": "VERIFIED",
+        }
+    except Exception as original_error:
+        if modification_started:
+            try:
+                _restore_from_transaction(mkv_path, transaction_dir, manifest)
+            except Exception as restore_error:
+                recovery_dir = move_transaction_to_recovery(
+                    transaction_dir, backup_root,
+                    reason=f"Injection failed ({original_error}); automatic restoration also failed ({restore_error}).",
+                )
+                raise RuntimeError(
+                    f"Injection failed ({original_error}); automatic backup restoration also failed ({restore_error}). "
+                    f"The untouched backup is available at: {recovery_dir / 'original.mkv'}"
+                ) from restore_error
+        shutil.rmtree(transaction_dir, ignore_errors=True)
+        raise
+    finally:
+        new_chapters.unlink(missing_ok=True)
+
+
+def finalize_injection_transaction(transaction: dict[str, Any]) -> str | None:
+    """Finalize only after the episode's SUCCEEDED state has committed to SQLite."""
+    from core.backup_manager import write_transaction_manifest
+
+    transaction_dir = Path(transaction["transaction_path"]).resolve()
+    if not transaction_dir.is_dir():
+        return None
+    manifest = json.loads((transaction_dir / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("phase") != "VERIFIED":
+        raise RuntimeError("Only a verified chapter transaction can be finalized.")
+
+    backup_root = transaction_dir.parent.parent
+    archive_path = None
+    original_chapters = transaction_dir / "original_chapters.xml"
+    if original_chapters.is_file():
+        archive_dir = backup_root / "chapters" / str(manifest["transaction_id"])
+        archive_dir.mkdir(parents=True, exist_ok=False)
+        destination = archive_dir / "original_chapters.xml"
+        original_chapters.replace(destination)
+        archive_manifest = {
+            "schema_version": 1,
+            "transaction_id": manifest["transaction_id"],
+            "episode_id": manifest.get("episode_id"),
+            "file_name": manifest.get("file_name"),
+            "target_path": manifest.get("target_path"),
+            "created_at": __import__("datetime").datetime.now().astimezone().isoformat(),
+            "archive_file": "original_chapters.xml",
+        }
+        _write_json(archive_dir / "manifest.json", archive_manifest)
+        archive_path = str(destination)
+
+    manifest["phase"] = "DATABASE_COMMITTED"
+    manifest["chapter_archive_path"] = archive_path
+    write_transaction_manifest(transaction_dir, manifest)
+    shutil.rmtree(transaction_dir)
+    return archive_path
+
+
+def rollback_injection_transaction(transaction: dict[str, Any], backup_root: Path) -> None:
+    """Restore the complete original MKV if the database commit did not succeed."""
+    from core.backup_manager import move_transaction_to_recovery
+
+    transaction_dir = Path(transaction["transaction_path"]).resolve()
+    manifest = json.loads((transaction_dir / "manifest.json").read_text(encoding="utf-8"))
+    target = Path(manifest["target_path"])
+    try:
+        _restore_from_transaction(target, transaction_dir, manifest)
+    except Exception as restore_error:
+        recovery_dir = move_transaction_to_recovery(
+            transaction_dir, backup_root,
+            reason=f"Database commit failed and restoring the original MKV also failed: {restore_error}",
+        )
+        raise RuntimeError(
+            "Database commit failed and automatic backup restoration also failed. "
+            f"The untouched backup is available at: {recovery_dir / 'original.mkv'}"
+        ) from restore_error
+    shutil.rmtree(transaction_dir, ignore_errors=True)
+
+
+def reconcile_backup_transactions(backup_root: Path, get_episode_injection_status) -> dict[str, int]:
+    """Resolve temporary transaction folders after an unclean application exit."""
+    from core.backup_manager import ensure_backup_layout, move_transaction_to_recovery
+
+    directories = ensure_backup_layout(backup_root)
+    summary = {"finalized": 0, "removed_incomplete": 0, "moved_to_recovery": 0, "errors": 0}
+    for transaction_dir in list(directories["temporary"].iterdir()):
+        if not transaction_dir.is_dir() or transaction_dir.is_symlink():
+            continue
+        try:
+            manifest = json.loads((transaction_dir / "manifest.json").read_text(encoding="utf-8"))
+            phase = manifest.get("phase")
+            if phase in {"PREPARING", "BACKUP_READY"}:
+                shutil.rmtree(transaction_dir)
+                summary["removed_incomplete"] += 1
+                continue
+            episode_id = manifest.get("episode_id")
+            state = get_episode_injection_status(int(episode_id)) if episode_id is not None else None
+            if phase == "VERIFIED" and state == "SUCCEEDED":
+                finalize_injection_transaction({"transaction_path": str(transaction_dir)})
+                summary["finalized"] += 1
+            else:
+                move_transaction_to_recovery(
+                    transaction_dir, backup_root,
+                    reason="The application stopped during chapter injection. Inspect the backup and target MKV before retrying.",
+                )
+                summary["moved_to_recovery"] += 1
+        except Exception:
+            summary["errors"] += 1
+    return summary
+
+
+
     mkv_path: Path, chapters: list[dict[str, Any]], plugins_path: Path, backup_root: Path,
     *, replace_existing: bool,
 ) -> Path:
