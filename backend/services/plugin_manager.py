@@ -293,6 +293,20 @@ def _inspect_local_tools(plugins_root: Path) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _clean_stale_staging(plugins_root: Path) -> None:
+    staging_root = plugins_root / ".staging"
+    if not staging_root.is_dir():
+        return
+    for item in staging_root.iterdir():
+        try:
+            if item.is_dir() and not item.is_symlink():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not remove stale plugin staging item: %s", item)
+
+
 def ensure_required_plugins(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Prepare the local Windows multimedia tools automatically at backend startup."""
     global _STATE
@@ -316,6 +330,7 @@ def ensure_required_plugins(config: dict[str, Any] | None = None) -> dict[str, A
 
         try:
             plugins_root.mkdir(parents=True, exist_ok=True)
+            _clean_stale_staging(plugins_root)
             tools = _inspect_local_tools(plugins_root)
             if not tools["ffmpeg"]["available"] or not tools["ffprobe"]["available"]:
                 _install_ffmpeg(plugins_root)

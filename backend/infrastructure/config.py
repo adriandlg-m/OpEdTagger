@@ -84,6 +84,13 @@ def _persist_config(path: Path, config: dict[str, Any]) -> None:
 
 def _migrate_legacy_storage(config: dict[str, Any], stored: dict[str, Any]) -> bool:
     """Move the default data locations to the project root without deleting the source."""
+    try:
+        migration_version = int(stored.get("_storage_layout_version", 0) or 0)
+    except (TypeError, ValueError):
+        migration_version = 0
+    if migration_version >= 1:
+        return False
+
     root = project_root()
     data_dir = app_data_dir()
     template_target = root / "Templates"
@@ -114,7 +121,12 @@ def _migrate_legacy_storage(config: dict[str, Any], stored: dict[str, Any]) -> b
             if str(config[key]) != str(destination):
                 config[key] = str(destination)
                 changed = True
-    return changed
+
+    # Remember that the potentially large copy was completed. Source folders
+    # deliberately remain on disk, so this marker avoids rescanning gigabytes
+    # of templates on every API request.
+    config["_storage_layout_version"] = 1
+    return True
 
 
 def load_config() -> dict[str, Any]:

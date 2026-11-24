@@ -82,7 +82,9 @@ La aplicación separa los datos de ejecución de los recursos de trabajo. Config
 - macOS: `~/Library/Application Support/OpEdTagger`
 - Linux: `$XDG_DATA_HOME/OpEdTagger` o `~/.local/share/OpEdTagger`
 
-Se pueden sobrescribir las ubicaciones mediante `OPEDTAGGER_DATA_DIR` y `OPEDTAGGER_CONFIG_PATH`.
+Las carpetas `Templates/` y `plugins/` se encuentran en la raíz del proyecto. Cada serie utiliza `Templates/<serie>/video_files` para los vídeos OP/ED y `Templates/<serie>/songs_files` para los WAV derivados. Las herramientas multimedia se instalan en `plugins/`. Estas carpetas están excluidas de Git.
+
+Se pueden sobrescribir las ubicaciones mediante `OPEDTAGGER_DATA_DIR` y `OPEDTAGGER_CONFIG_PATH`. Al detectar las rutas predeterminadas de versiones anteriores, OpEdTagger copia los archivos existentes a las nuevas ubicaciones sin sobrescribir archivos de destino ni borrar las carpetas de origen. La migración se marca como completada para no recorrer repetidamente bibliotecas grandes.
 
 La biblioteca del usuario no se copia al directorio de datos. Las cargas del análisis individual se almacenan temporalmente y se eliminan al finalizar el trabajo.
 
