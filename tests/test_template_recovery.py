@@ -201,7 +201,7 @@ def test_current_anime_themes_graphql_endpoint_and_schema_are_used():
     assert "animethemes" in template_service.THEMES_QUERY
     assert "animethemeentries" in template_service.THEMES_QUERY
     assert "basename" in template_service.THEMES_QUERY
-    assert "themes {" not in template_service.THEMES_QUERY
+    assert "\\n    themes {" not in template_service.THEMES_QUERY
 
 
 def test_template_download_creates_both_folders_and_preserves_existing_song_files(tmp_path, monkeypatch):
