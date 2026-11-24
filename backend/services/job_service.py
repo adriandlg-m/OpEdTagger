@@ -187,7 +187,7 @@ class JobService:
                     job_id,
                     stage=stage,
                     current_item=name,
-                    progress=percentage,
+                    progress=percentage * 0.2,
                 )
             def episode_progress(pct: float) -> None:
                 self._update(job_id, stage="analyzing", progress=20 + pct * 0.8, current_item=staged_path.name)
