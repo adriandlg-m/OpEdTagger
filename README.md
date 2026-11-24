@@ -38,7 +38,7 @@ tests/                  Pruebas automatizadas
 - **Trabajos:** cola local persistida con un worker. Los trabajos activos se marcan como interrumpidos al iniciar después de un cierre inesperado; no se repiten solos.
 - **Progreso:** polling REST desde la interfaz.
 - **Motor:** conserva el algoritmo chroma del original (`COSINE_SIMILARITY_THRESHOLD = 0.68`). El detector OP/ED se trata como componente protegido: la preparación de herramientas, las plantillas, la interfaz y la inyección no deben cambiar su lógica ni sus parámetros. Una prueba de contrato verifica sus constantes y pasos críticos. El valor `score` se presenta como score bruto, nunca como porcentaje ni probabilidad. Los WAV derivados tienen un manifiesto de fingerprints: se regeneran cuando cambia el video fuente y se eliminan si el video fuente desaparece.
-- **Templates:** al analizar una serie, el servicio consulta AnimeThemes y selecciona automáticamente la entrada más adecuada siguiendo el criterio del CLI (coincidencia exacta, coincidencia parcial y fallback al primer resultado con OP/ED). Descarga en `video_files`, genera y valida WAV en `songs_files` y solo entonces inicia la detección. No requiere seleccionar un resultado manualmente. Se conservan WAV manuales y el manifiesto permite regenerar solo las conversiones derivadas cuyo vídeo fuente haya cambiado.
+- **Templates:** al analizar una serie, el servicio consulta AnimeThemes y sincroniza todos los resultados cuyo slug o título romaji coincida parcialmente con el nombre local; si no hay coincidencias, conserva el fallback del CLI y procesa los resultados de la búsqueda. Descarga en `video_files`, genera y valida WAV en `songs_files` y solo entonces inicia la detección. No requiere seleccionar resultados manualmente. Se conservan WAV manuales y el manifiesto permite reutilizar vídeos que no hayan cambiado.
 
 ## Requisitos
 
@@ -109,7 +109,7 @@ La pantalla permite seleccionar un MKV, consultar AnimeThemes y elegir un result
 
 ### Selección de templates
 
-Para el procesamiento por serie se reutiliza la carpeta de templates existente. Si está vacía, el job limpia el nombre local (año y etiquetas entre corchetes), busca AnimeThemes y escoge automáticamente una coincidencia exacta o parcial; si no hay coincidencia textual, conserva el fallback del CLI al primer resultado que tenga OP/ED. Después descarga los vídeos, convierte las pistas a WAV y comprueba que los archivos sean WAV legibles con audio antes de entregarlos al detector. La API conserva los endpoints de búsqueda y descarga para integraciones externas.
+Para el procesamiento por serie, las plantillas gestionadas por AnimeThemes se sincronizan al pulsar Analizar. El job limpia el nombre local (año y etiquetas entre corchetes), consulta el catálogo y descarga todos los resultados cuyo slug o título romaji coincida parcialmente; si no hay coincidencias, conserva el fallback del CLI y procesa la lista devuelta por la API. Los vídeos que no hayan cambiado se reutilizan desde disco. Después prepara los WAV y comprueba que sean archivos legibles con audio antes de entregarlos al detector. Si AnimeThemes no responde, se reutiliza la caché local existente; una conversión incompleta impide iniciar la detección. La API conserva los endpoints de búsqueda y descarga para integraciones externas.
 
 ## Migración desde `anime_master.json`
 
