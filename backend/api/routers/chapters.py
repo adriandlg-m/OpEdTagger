@@ -9,7 +9,7 @@ from backend.infrastructure.config import load_config, resolve_library_path, res
 from backend.infrastructure.database import db_session, utc_now
 from backend.services.analysis_service import assert_analysis_file_unchanged, preview_episode_chapters
 from backend.services.chapter_service import CHAPTER_OPERATION_LOCK, inject_episode_chapters
-from backend.services.confidence import episode_review_status
+from core.confidence import episode_review_status
 from backend.services.log_service import log_event
 from core.media_tools import build_chapters, get_mkv_duration
 
