@@ -287,6 +287,9 @@ def _inspect_local_tools(plugins_root: Path) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for name in ("ffmpeg", "ffprobe", "mkvmerge", "mkvpropedit"):
         path = find_local_tool(plugins_root, name)
+        if path is None:
+            system_path = shutil.which(name) or shutil.which(f"{name}.exe")
+            path = Path(system_path) if system_path else None
         args = ("--version",) if name.startswith("mkv") else ("-version",)
         ok, version = _version_ok(path, args) if path else (False, None)
         result[name] = {"available": ok, "path": str(path) if path else None, "version": version}
@@ -327,62 +330,151 @@ def _clean_stale_staging(plugins_root: Path) -> None:
             logger.warning("Could not remove stale plugin staging item: %s", item)
 
 
-def ensure_required_plugins(config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Prepare the local Windows multimedia tools automatically at backend startup."""
+def _update_manager_state(status: str, message: str, tools: dict[str, dict[str, Any]],
+                            error: str | None = None) -> dict[str, Any]:
     global _STATE
+    state = {
+        "status": status,
+        "last_error": error,
+        "last_check": None,
+        "installed": tools,
+        "message": message,
+    }
+    with _STATE_LOCK:
+        _STATE = state
+    return dict(state)
+
+
+def _can_auto_install() -> bool:
+    return os.name == "nt" and platform.machine().lower() in {"amd64", "x86_64"}
+
+
+def ensure_analysis_plugins(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Ensure FFmpeg/FFprobe are ready; MKVToolNix is not needed for analysis."""
     cfg = config or load_config()
     plugins_root = Path(cfg["plugins_path"]).expanduser().resolve()
     with _INSTALL_LOCK:
         with _STATE_LOCK:
-            _STATE = {"status": "checking", "last_error": None, "last_check": None, "installed": {}}
-
-        if os.name != "nt" or platform.machine().lower() not in {"amd64", "x86_64"}:
-            tools = _inspect_local_tools(plugins_root)
-            with _STATE_LOCK:
-                _STATE = {
-                    "status": "ready" if all(item["available"] for item in tools.values()) else "manual_setup_required",
-                    "last_error": None,
-                    "last_check": None,
-                    "installed": tools,
-                    "message": "Automatic downloads are enabled for Windows x64; other platforms must provide the tools through plugins_path or PATH.",
-                }
-                return dict(_STATE)
+            _STATE = {
+                "status": "checking",
+                "last_error": None,
+                "last_check": None,
+                "installed": _inspect_local_tools(plugins_root),
+                "message": "Checking FFmpeg and FFprobe required for audio analysis.",
+            }
 
         try:
             plugins_root.mkdir(parents=True, exist_ok=True)
-            _clean_stale_staging(plugins_root)
+            if _can_auto_install():
+                _clean_stale_staging(plugins_root)
             tools = _inspect_local_tools(plugins_root)
             if not tools["ffmpeg"]["available"] or not tools["ffprobe"]["available"]:
+                if not _can_auto_install():
+                    raise RuntimeError("FFmpeg and FFprobe must be installed in plugins_path or available on PATH on this platform.")
                 _install_ffmpeg(plugins_root)
-            if not tools["mkvmerge"]["available"] or not tools["mkvpropedit"]["available"]:
-                _install_mkvtoolnix(plugins_root)
+                tools = _inspect_local_tools(plugins_root)
 
-            tools = _inspect_local_tools(plugins_root)
-            missing = [name for name, info in tools.items() if not info["available"]]
+            missing = [name for name in ("ffmpeg", "ffprobe") if not tools[name]["available"]]
             if missing:
-                raise RuntimeError("The following tools failed their post-install check: " + ", ".join(missing))
+                raise RuntimeError("The following analysis tools are unavailable: " + ", ".join(missing))
+
+            all_tools_ready = all(tools[name]["available"] for name in ("mkvmerge", "mkvpropedit"))
+            status = "ready" if all_tools_ready else "analysis_ready"
+            message = (
+                "All multimedia tools are installed and verified."
+                if all_tools_ready else
+                "FFmpeg and FFprobe are ready. MKVToolNix will be installed automatically when chapter injection is requested."
+            )
+            return _update_manager_state(status, message, tools)
+        except Exception as exc:
+            logger.exception("Automatic FFmpeg/FFprobe setup failed.")
+            tools = _inspect_local_tools(plugins_root)
+            status = "error" if _can_auto_install() else "manual_setup_required"
+            return _update_manager_state(
+                status,
+                "Audio analysis cannot start until FFmpeg and FFprobe are available.",
+                tools,
+                str(exc),
+            )
+
+
+def ensure_chapter_plugins(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Ensure the analysis tools and MKVToolNix required for chapter operations."""
+    cfg = config or load_config()
+    analysis_state = ensure_analysis_plugins(cfg)
+    if analysis_state.get("status") not in {"ready", "analysis_ready"}:
+        return analysis_state
+
+    plugins_root = Path(cfg["plugins_path"]).expanduser().resolve()
+    with _INSTALL_LOCK:
+        try:
+            tools = _inspect_local_tools(plugins_root)
+            if not tools["mkvmerge"]["available"] or not tools["mkvpropedit"]["available"]:
+                if not _can_auto_install():
+                    raise RuntimeError("MKVToolNix (mkvmerge and mkvpropedit) must be installed in plugins_path or available on PATH on this platform.")
+                _install_mkvtoolnix(plugins_root)
+                tools = _inspect_local_tools(plugins_root)
+
+            missing = [name for name in ("mkvmerge", "mkvpropedit") if not tools[name]["available"]]
+            if missing:
+                raise RuntimeError("The following chapter tools are unavailable: " + ", ".join(missing))
+            _update_manager_state(
+                "ready",
+                "FFmpeg, FFprobe and MKVToolNix are installed and verified.",
+                tools,
+            )
             manifest_path = plugins_root / "plugins_manifest.json"
             manifest_tmp = manifest_path.with_suffix(".tmp")
             manifest_tmp.write_text(json.dumps({"tools": tools}, indent=2, ensure_ascii=False), encoding="utf-8")
             manifest_tmp.replace(manifest_path)
-            with _STATE_LOCK:
-                _STATE = {
-                    "status": "ready",
-                    "last_error": None,
-                    "last_check": None,
-                    "installed": tools,
-                    "message": "All required multimedia tools are installed and verified.",
-                }
+            return dict(_STATE)
         except Exception as exc:
-            logger.exception("Automatic multimedia tool setup failed.")
-            with _STATE_LOCK:
-                _STATE = {
-                    "status": "error",
-                    "last_error": str(exc),
-                    "last_check": None,
-                    "installed": _inspect_local_tools(plugins_root),
-                    "message": "Automatic setup could not complete. The backend remains available; analysis or injection will require the missing tool.",
-                }
+            logger.exception("Automatic MKVToolNix setup failed.")
+            tools = _inspect_local_tools(plugins_root)
+            status = "error" if _can_auto_install() else "manual_setup_required"
+            return _update_manager_state(
+                status,
+                "Chapter injection cannot start until MKVToolNix is available.",
+                tools,
+                str(exc),
+            )
+
+
+def ensure_required_plugins(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Compatibility helper that ensures all analysis and chapter dependencies."""
+    analysis_state = ensure_analysis_plugins(config)
+    if analysis_state.get("status") not in {"ready", "analysis_ready"}:
+        return analysis_state
+    return ensure_chapter_plugins(config)
+
+
+_BACKGROUND_THREAD: threading.Thread | None = None
+
+
+def start_background_analysis_setup(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Start first-run FFmpeg provisioning without delaying the web server startup."""
+    global _BACKGROUND_THREAD, _STATE
+    cfg = dict(config or load_config())
+    with _STATE_LOCK:
+        if _BACKGROUND_THREAD is not None and _BACKGROUND_THREAD.is_alive():
+            return dict(_STATE)
+        _STATE = {
+            "status": "checking",
+            "last_error": None,
+            "last_check": None,
+            "installed": {},
+            "message": "Preparing FFmpeg and FFprobe in the background. Analysis will wait until setup completes.",
+        }
+
+        def worker() -> None:
+            ensure_analysis_plugins(cfg)
+
+        _BACKGROUND_THREAD = threading.Thread(
+            target=worker,
+            name="opedtagger-plugin-setup",
+            daemon=True,
+        )
+        _BACKGROUND_THREAD.start()
         return dict(_STATE)
 
 
