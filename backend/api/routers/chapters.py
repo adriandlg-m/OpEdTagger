@@ -10,6 +10,7 @@ from backend.infrastructure.config import load_config, resolve_library_path, res
 from backend.infrastructure.database import db_session, utc_now
 from backend.services.analysis_service import assert_analysis_file_unchanged, preview_episode_chapters
 from backend.services.log_service import log_event
+from backend.services.plugin_manager import ensure_chapter_plugins
 from core.media_tools import get_mkv_duration, build_chapters, inject_chapters_with_backup
 
 router = APIRouter(prefix="/episodes", tags=["Episodes / Chapters"])
@@ -95,6 +96,11 @@ def inject_episode_chapters(episode_id: int, body: InjectionRequest):
             raise HTTPException(status_code=409, detail="Review and approve the detected timestamps before injection.")
         if result["injection_status"] in {"IN_PROGRESS", "RECOVERY_REQUIRED"}:
             raise HTTPException(status_code=409, detail="This episode requires inspection before another injection attempt.")
+        cfg = load_config()
+        plugin_state = ensure_chapter_plugins(cfg)
+        if plugin_state.get("status") != "ready":
+            detail = plugin_state.get("last_error") or plugin_state.get("message") or "MKVToolNix is unavailable."
+            raise HTTPException(status_code=503, detail=f"Chapter tools are not ready: {detail}")
         with db_session() as conn:
             claimed = conn.execute(
                 "UPDATE analysis_results SET injection_status='IN_PROGRESS',updated_at=? "
@@ -104,7 +110,6 @@ def inject_episode_chapters(episode_id: int, body: InjectionRequest):
             )
             if claimed.rowcount != 1:
                 raise HTTPException(status_code=409, detail="The episode state changed concurrently. Refresh and review it again before injection.")
-        cfg = load_config()
         try:
             preview = preview_episode_chapters(episode_id)
             backup = inject_chapters_with_backup(Path(episode["file_path"]), preview["chapters"],
