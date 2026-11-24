@@ -335,7 +335,7 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
                           job_id=job_id, series_name=series_name, episode_name=path.name)
             items.append(result)
             update_job(item_index=index, item_status="completed", item_progress=100,
-                       item_result=result, current_item=path.name, progress=(index + 1) / total * 100)
+                       item_result=result, current_item=path.name, progress=20 + (index + 1) / total * 80)
         except InterruptedError as exc:
             items.append({"file_name": path.name, "analysis_status": "CANCELLED", "op": None, "ed": None})
             update_job(item_index=index, item_status="cancelled", item_progress=0,
@@ -355,7 +355,7 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
                       series_name=series_name, episode_name=path.name)
             items.append({"file_name": path.name, "analysis_status": "FAILED", "op": None, "ed": None, "error": str(exc)})
             update_job(item_index=index, item_status="failed", item_progress=100,
-                       item_error=str(exc), current_item=path.name, progress=(index + 1) / total * 100)
+                       item_error=str(exc), current_item=path.name, progress=20 + (index + 1) / total * 80)
     _apply_anomalies(series_name)
     if cancel_event.is_set():
         final = "cancelled"
