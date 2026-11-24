@@ -615,20 +615,20 @@ def _download_anime_rows_templates_impl(
 def _download_selected_templates_impl(
     series_name: str,
     slug: str,
-    progress: Callable[[int, int, str], None] | None = None,
+    progress: Callable[[str, float, str], None] | None = None,
 ) -> dict:
-    payload = _post_graphql(slug)
-    rows = payload.get("data", {}).get("search", {}).get("anime", {}).get("data", []) or []
-    anime_rows = [anime for anime in rows if anime.get("slug") == slug]
-    if len(anime_rows) != 1:
-        raise ValueError("AnimeThemes did not return one unambiguous anime for the selected slug.")
-    return _download_anime_rows_templates_impl(series_name, anime_rows, progress)
+    payload = _fetch_anime_details(slug, progress=progress)
+    anime = payload.get("data", {}).get("anime")
+    if not isinstance(anime, dict) or anime.get("slug") != slug:
+        raise ValueError(f"AnimeThemes no devolvió el anime solicitado para el slug '{slug}'.")
+    return _download_anime_rows_templates_impl(series_name, [anime], progress)
+
 
 
 def download_selected_templates(
     series_name: str,
     slug: str,
-    progress: Callable[[int, int, str], None] | None = None,
+    progress: Callable[[str, float, str], None] | None = None,
 ) -> dict:
     with _TEMPLATE_LOCK:
         target_dir = _safe_series_template_dir(series_name)
