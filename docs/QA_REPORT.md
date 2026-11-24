@@ -10,7 +10,7 @@
 | `python -m compileall -q backend core scripts` | Correcto |
 | `PYTHONPATH=. pytest -q` | **97 pruebas aprobadas**, 1 warning, GitHub Actions (Python 3.12, Ubuntu) |
 | TypeScript Compiler API parser sobre JS/JSX/TS del frontend | 17 archivos analizados sin errores de sintaxis |
-| Jerarquía recursiva de carpetas de usuario | Verificada con carpetas multinivel y archivos en raíz |
+| Navegación jerárquica serie → carpeta → episodio | UI con carpetas contraídas, contenido directo por nivel, estado y navegación anterior/siguiente en el espacio de episodio; build Vite aprobado, validación visual Windows pendiente |
 | Toast fijo y Dashboard con scroll interno | Revisados estáticamente; prueba visual pendiente en Windows |
 | AniList public GraphQL API (sin token) y búsqueda de anime | Cubiertos con respuestas simuladas; una consulta externa real queda pendiente de la prueba en Windows |
 | Configuración de AniList | No hay token, API key ni credenciales que configurar |

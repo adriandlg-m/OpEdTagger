@@ -2899,6 +2899,7 @@ button:disabled {
 }
 
 .detail-page .episodes-panel > .episode-toolbar,
+.detail-page .episodes-panel > .confidence-summary-bar,
 .detail-page .episodes-panel > .episode-column-head,
 .detail-page .episodes-panel > .table-footer {
   flex: 0 0 auto;
@@ -4467,11 +4468,19 @@ button:disabled {
 }
 .folder-browser-toolbar { flex: 0 0 auto; }
 .folder-browser-viewport {
+  display: block;
   flex: 1 1 0;
+  flex-basis: 0;
+  height: 0;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   padding: 8px 14px 12px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 .folder-browser-content {
   display: flex;
@@ -4844,6 +4853,17 @@ button:disabled {
 }
 @media (max-width: 760px) {
   .folder-browser-panel .episode-column-head { display: none; }
+  .folder-browser-viewport {
+    flex: 0 0 auto;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+  .episode-workspace {
+    flex: 0 0 auto;
+    min-height: auto;
+    overflow: visible;
+  }
   .episode-browser-main {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px;
     gap: 10px;

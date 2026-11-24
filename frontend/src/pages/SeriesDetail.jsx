@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, Play, Search, ShieldCheck, XCircle, Eye, FileCheck2, Folder, FolderOpen, ImagePlus, Trash2, ZoomIn, ExternalLink } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Play, Search, ShieldCheck, XCircle, Eye, FileCheck2, Folder, FolderOpen, ImagePlus, Trash2, ZoomIn, ExternalLink } from 'lucide-react';
 import PageHeader from '../components/PageHeader.jsx';
 import Poster from '../components/Poster.jsx';
 import PosterSearchModal from '../components/PosterSearchModal.jsx';
@@ -187,7 +187,7 @@ function EpisodeRow({
 }
 
 function EpisodeWorkspace({
-  episode, siblings, onBack, onNavigate, onApprove, onCorrect, onInject, onToast, showOutliers = true,
+  episode, siblings, onBack, backLabel = 'Volver a la carpeta', onNavigate, onApprove, onCorrect, onInject, onToast, showOutliers = true,
 }) {
   const [opStart, setOpStart] = useState(episode.op?.start ?? '');
   const [opEnd, setOpEnd] = useState(episode.op?.end ?? '');
@@ -272,7 +272,7 @@ function EpisodeWorkspace({
       <header className="episode-workspace-header">
         <div className="episode-workspace-title">
           <button type="button" className="workspace-back-link" onClick={onBack}>
-            <ArrowLeft size={15} /> Volver a la carpeta
+            <ArrowLeft size={15} /> {backLabel}
           </button>
           <span className="panel-eyebrow">REVISIÓN DE EPISODIO</span>
           <h2>{episode.displayId || episode.file_name}</h2>
@@ -384,12 +384,6 @@ function buildFolderTree(episodes) {
   }
 
   return root;
-}
-
-function countFolderEpisodes(folder) {
-  let count = folder.episodes.length;
-  for (const child of folder.folders.values()) count += countFolderEpisodes(child);
-  return count;
 }
 
 function findFolderByPath(root, path) {
@@ -578,7 +572,6 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     rememberWorkspaceScroll();
     setSelectedEpisodeId(episode.id);
   };
-  const navigateBackFromFolder = () => navigateToFolderPath(parentFolderPath);
   const visibleSiblingEpisodes = directEpisodes.length
     ? directEpisodes
     : selectedEpisode ? [selectedEpisode] : [];
@@ -1002,6 +995,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
             episode={selectedEpisode}
             siblings={visibleSiblingEpisodes}
             onBack={navigateBackFromEpisode}
+            backLabel={activeFolderPath ? 'Volver a la carpeta' : 'Volver a la biblioteca'}
             onNavigate={(episode) => episode && setSelectedEpisodeId(episode.id)}
             onApprove={approve}
             onCorrect={correct}
@@ -1040,7 +1034,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
               <div className="confidence-batch-actions">
                 <button className="button button-ghost button-small" onClick={() => setStatusFilter('Necesita revisión')} disabled={!reviewQueueCount}>Ver excepciones</button>
                 <button className="button button-secondary button-small" onClick={selectAllEligible} disabled={!scopeEligibleEpisodes.length || active}>
-                  {activeFolderPath ? `Seleccionar elegibles (${scopeEligibleEpisodes.length})` : `Seleccionar elegibles (${scopeEligibleEpisodes.length})`}
+                  {activeFolderPath ? `Seleccionar en esta carpeta (${scopeEligibleEpisodes.length})` : `Seleccionar elegibles (${scopeEligibleEpisodes.length})`}
                 </button>
                 <button className="button button-primary button-small" onClick={startBatchInjection} disabled={!selectedEligibleEpisodes.length || batchSubmitting || active}>
                   {batchSubmitting ? 'Preparando…' : `Inyectar seleccionados (${selectedEligibleEpisodes.length})`}

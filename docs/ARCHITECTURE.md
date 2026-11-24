@@ -6,7 +6,7 @@ Aplicación local modular, desplegada como un único backend FastAPI y un fronte
 
 ## Responsabilidades
 
-- `frontend`: presentación, navegación y estado de pantalla. No contiene lógica de análisis ni de escritura MKV.
+- `frontend`: presentación, navegación y estado de pantalla. La vista de serie navega por niveles (serie → carpeta → episodio), manteniendo carpetas no seleccionadas contraídas; la revisión de OP/ED se presenta en un espacio de episodio dedicado. No contiene lógica de análisis ni de escritura MKV.
 - `backend/api/routers`: HTTP, validación y traducción de errores.
 - `backend/services`: casos de uso de biblioteca, análisis, jobs, templates, preparación de herramientas y logs.
 - `backend/infrastructure`: rutas de datos, SQLite, logging y configuración.
@@ -80,4 +80,4 @@ Los estados de un job son `queued`, `running`, `completed`, `completed_with_erro
 
 ## User-defined folder hierarchy
 
-The library scanner preserves folder structure relative to each series directory. Episode API records expose `relative_path`, `folder_path`, and `folder_segments` using forward slashes for cross-platform consistency. The frontend builds a recursively expandable tree from these fields. The app does not label directories as official seasons or cours and does not use external metadata providers to reorganize local files.
+The library scanner preserves folder structure relative to each series directory. Episode API records expose `relative_path`, `folder_path`, and `folder_segments` using forward slashes for cross-platform consistency. The frontend uses these fields for a drill-down navigator: the series screen lists only top-level folders, entering a folder shows its direct episodes and collapsed child folders, and selecting an episode opens a dedicated review workspace. Search/status filters apply across the series while folder navigation retains the current filter, batch selection and folder scroll positions. The app does not label directories as official seasons or cours and does not use external metadata providers to reorganize local files.
