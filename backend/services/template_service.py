@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import closing
 import re
 import shutil
 import threading
@@ -326,13 +327,13 @@ def _download(
             if current_size:
                 headers["Range"] = f"bytes={current_size}-"
 
-            with http.get(
+            with closing(http.get(
                 url,
                 headers=headers,
                 stream=True,
                 timeout=(15, timeout),
                 **_request_options(),
-            ) as response:
+            )) as response:
                 if response.status_code == 206 and current_size:
                     content_range = response.headers.get("Content-Range", "")
                     if content_range and not content_range.startswith(f"bytes {current_size}-"):
