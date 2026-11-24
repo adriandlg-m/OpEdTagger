@@ -451,9 +451,28 @@ def _ensure_templates_impl(
     query = sanitize_query_from_folder(series_name)
     if not query:
         raise RuntimeError(f"The series folder name '{series_name}' produces an empty AnimeThemes search term.")
-    payload = _post_graphql(query)
+    try:
+        payload = _post_graphql(query)
+    except InterruptedError:
+        raise
+    except Exception as exc:
+        if has_templates:
+            logger.warning(
+                "AnimeThemes synchronization failed for %s; reusing the existing local templates: %s",
+                series_name,
+                exc,
+            )
+            return series_dir
+        raise
+
     anime_rows = payload.get("data", {}).get("search", {}).get("anime", {}).get("data", []) or []
     if not anime_rows:
+        if has_templates:
+            logger.warning(
+                "AnimeThemes returned no results for %s; reusing the existing local templates.",
+                series_name,
+            )
+            return series_dir
         raise RuntimeError(
             f"No AnimeThemes templates were found for '{series_name}' "
             f"(search term: '{query}'). Check the series folder name or AnimeThemes connectivity."
