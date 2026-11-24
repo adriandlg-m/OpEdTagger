@@ -191,11 +191,6 @@ function FolderNode({ folder, depth, onApprove, onCorrect, onInject, onToast, sh
 export default function SeriesDetail({ series, episodes, onBack, onStartProcessing, onCancelProcessing, activeJob, onRefresh, onPosterUpdated, onToast, showOutliers = true }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('Todos los estados');
-  const [templatePanel, setTemplatePanel] = useState(false);
-  const [templateCandidates, setTemplateCandidates] = useState([]);
-  const [templateLoading, setTemplateLoading] = useState(false);
-  const [templateError, setTemplateError] = useState('');
-  const [downloadingSlug, setDownloadingSlug] = useState('');
   const [posterModalOpen, setPosterModalOpen] = useState(false);
   const [posterLightboxOpen, setPosterLightboxOpen] = useState(false);
   const [posterUrl, setPosterUrl] = useState(series.poster_url || '');
@@ -259,42 +254,15 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
   ), [folderTree]);
   const active = activeJob && activeJob.kind === 'series' && activeJob.series_name === series.name && ['queued', 'running', 'cancellation_requested'].includes(activeJob.status);
-
-  const openTemplateSearch = async () => {
-    setTemplatePanel(true);
-    setTemplateLoading(true);
-    setTemplateError('');
-    try {
-      const result = await api.searchTemplates(series.name);
-      setTemplateCandidates(result.candidates || []);
-      if (!(result.candidates || []).length) setTemplateError('AnimeThemes no devolvió resultados para esta búsqueda.');
-    } catch (error) {
-      setTemplateError(error.message || 'No se pudo consultar AnimeThemes.');
-    } finally {
-      setTemplateLoading(false);
-    }
-  };
-
-  const useTemplateCandidate = async (candidate) => {
-    setDownloadingSlug(candidate.slug);
-    setTemplateError('');
-    try {
-      const result = await api.downloadTemplates(series.name, candidate.slug);
-      setTemplatePanel(false);
-      await onRefresh?.();
-      const preparedSongs = Number(result.song_templates || 0);
-      const templateMessage = `Templates descargados: ${result.downloaded} archivo(s) · WAV disponibles: ${preparedSongs}.`;
-      if (result.audio_preparation_error || result.audio_preparation_warning || preparedSongs === 0) {
-        onToast(`${templateMessage} ${result.audio_preparation_error || result.audio_preparation_warning || 'No se generaron WAV; revisa la disponibilidad de FFmpeg.'}`, 'warning');
-      } else {
-        onToast(`${templateMessage} ${candidate.title_english || candidate.title_romaji || candidate.slug}`, 'success');
-      }
-    } catch (error) {
-      setTemplateError(error.message || 'No se pudieron descargar los templates.');
-    } finally {
-      setDownloadingSlug('');
-    }
-  };
+  const activeStageLabel = ({
+    queued: 'En cola',
+    initializing: 'Iniciando análisis',
+    preparing_dependencies: 'Preparando herramientas multimedia',
+    preparing_templates: 'Sincronizando y preparando templates OP/ED',
+    analyzing_episodes: 'Analizando episodios',
+    cancellation_requested: 'Solicitando cancelación',
+    cancelling: 'Cancelando análisis',
+  })[activeJob?.stage] || activeJob?.stage || 'Procesamiento';
 
   const openPosterSearch = () => setPosterModalOpen(true);
 
@@ -367,8 +335,8 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     <div className="page-content detail-page">
       <div className="detail-fixed-content">
         <div className="breadcrumb"><button onClick={onBack}><ArrowLeft size={15} /> Dashboard</button><ChevronRight size={14} /><span>{series.title}</span></div>
-        <PageHeader title="Detalle de serie" description="Revisa los segmentos detectados y el estado de cada episodio. El análisis no modifica archivos MKV."
-          eyebrow="BIBLIOTECA / SERIE" actions={active ? <button className="button button-danger-ghost" onClick={onCancelProcessing}><XCircle size={15} /> Cancelar análisis</button> : <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="button button-secondary" onClick={openPosterSearch}><ImagePlus size={15} /> {posterUrl ? 'Cambiar carátula' : 'Buscar carátula'}</button><button className="button button-secondary" onClick={openTemplateSearch}><Search size={15} /> Vincular AnimeThemes</button><button className="button button-primary" onClick={onStartProcessing}><Play size={15} fill="currentColor" /> Analizar serie</button></div>} />
+        <PageHeader title="Detalle de serie" description="Al analizar, OpEdTagger sincroniza automáticamente los templates OP/ED, prepara y valida sus WAV y después procesa los episodios. Los MKV no se modifican."
+          eyebrow="BIBLIOTECA / SERIE" actions={active ? <button className="button button-danger-ghost" onClick={onCancelProcessing}><XCircle size={15} /> Cancelar análisis</button> : <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="button button-secondary" onClick={openPosterSearch}><ImagePlus size={15} /> {posterUrl ? 'Cambiar carátula' : 'Buscar carátula'}</button><button className="button button-primary" onClick={onStartProcessing}><Play size={15} fill="currentColor" /> Analizar serie</button></div>} />
 
         {posterModalOpen && <PosterSearchModal
           seriesName={series.name || series.title}
@@ -376,21 +344,6 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
           onApplied={handlePosterApplied}
           onToast={onToast}
         />}
-
-        {templatePanel && <section className="panel" style={{ padding: 18, marginBottom: 16 }}>
-          <div className="panel-toolbar" style={{ marginBottom: 12 }}>
-            <div className="panel-title-wrap"><div className="panel-title-icon"><Search size={16} /></div><div><h2>Seleccionar anime en AnimeThemes</h2><p>Elige la entrada correcta para descargar sus templates OP/ED en la caché de esta serie.</p></div></div>
-            <button className="icon-button" onClick={() => setTemplatePanel(false)} aria-label="Cerrar búsqueda"><XCircle size={16} /></button>
-          </div>
-          {templateLoading && <p className="muted-score">Consultando AnimeThemes…</p>}
-          {templateError && <p className="muted-score" role="status">{templateError}</p>}
-          <div style={{ display: 'grid', gap: 8 }}>
-            {templateCandidates.map((candidate) => <div key={candidate.slug} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', padding: 12, borderRadius: 10, background: 'var(--surface-2, #151a27)' }}>
-              <div style={{ minWidth: 0 }}><strong>{candidate.title_english || candidate.title_romaji || candidate.slug}</strong><div className="muted-score">{candidate.title_romaji || ''} · OP {candidate.opening_count} · ED {candidate.ending_count} · {candidate.slug}</div></div>
-              <button className="button button-secondary button-small" disabled={Boolean(downloadingSlug)} onClick={() => useTemplateCandidate(candidate)}>{downloadingSlug === candidate.slug ? 'Descargando…' : 'Usar y descargar'}</button>
-            </div>)}
-          </div>
-        </section>}
 
         <section className={`panel series-hero-panel ${seriesMetadata?.banner_url && !bannerFailed ? 'series-hero-has-banner' : ''}`}>
           {seriesMetadata?.banner_url && !bannerFailed && (
@@ -488,7 +441,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
         )}
 
         {active && <section className="panel" style={{ padding: 16, marginBottom: 16 }}>
-          <div className="progress-heading"><span>{activeJob.stage || 'Procesamiento'} · {activeJob.current_item || 'Preparando…'}</span><strong>{Math.round(activeJob.progress || 0)}%</strong></div>
+          <div className="progress-heading"><span>{activeStageLabel} · {activeJob.current_item || 'Preparando…'}</span><strong>{Math.round(activeJob.progress || 0)}%</strong></div>
           <div className="progress-track"><span style={{ width: `${Math.min(100, activeJob.progress || 0)}%` }} /></div>
         </section>}      </div>
 
