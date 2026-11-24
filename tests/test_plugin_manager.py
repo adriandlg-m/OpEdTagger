@@ -118,6 +118,32 @@ def test_chapter_setup_installs_mkvtoolnix_on_demand(tmp_path, monkeypatch):
     assert state["installed"]["mkvpropedit"]["available"]
 
 
+
+def test_background_setup_returns_without_waiting_for_tool_download(tmp_path, monkeypatch):
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(plugin_manager, "_BACKGROUND_THREAD", None)
+
+    def delayed_setup(_config):
+        started.set()
+        release.wait(timeout=3)
+        return {"status": "analysis_ready"}
+
+    monkeypatch.setattr(plugin_manager, "ensure_analysis_plugins", delayed_setup)
+    state = plugin_manager.start_background_analysis_setup({"plugins_path": str(tmp_path / "plugins")})
+
+    try:
+        assert state["status"] == "checking"
+        assert started.wait(timeout=1)
+        assert plugin_manager._BACKGROUND_THREAD is not None
+        assert plugin_manager._BACKGROUND_THREAD.daemon
+    finally:
+        release.set()
+        if plugin_manager._BACKGROUND_THREAD is not None:
+            plugin_manager._BACKGROUND_THREAD.join(timeout=1)
+
 def test_plugin_status_reports_local_paths_and_missing_tools(tmp_path, monkeypatch):
     monkeypatch.setattr(plugin_manager, "load_config", lambda: {"plugins_path": str(tmp_path / "plugins")})
     status = plugin_manager.plugin_manager_status()
