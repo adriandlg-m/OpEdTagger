@@ -71,8 +71,50 @@ def _post_graphql(search_term: str, *, attempts: int = 3) -> dict:
     raise RuntimeError(f"AnimeThemes could not be reached after {attempts} attempts: {last_error}") from last_error
 
 
+def sanitize_query_from_folder(folder_name: str) -> str:
+    """Mirror the CLI's AnimeThemes query cleanup for local folder names."""
+    clean = re.sub(r"\(\d{4}\)", "", folder_name)
+    clean = re.sub(r"\[.*?\]", "", clean)
+    return clean.strip()
+
+
 def normalize(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", re.sub(r"\(\d{4}\)|\[.*?\]", "", value.lower()))
+
+
+def _choose_automatic_candidate(series_name: str, candidates: list[dict]) -> dict | None:
+    """Choose an AnimeThemes result automatically, following the former CLI ranking."""
+    if not candidates:
+        return None
+
+    wanted = normalize(sanitize_query_from_folder(series_name))
+    def fields(candidate: dict) -> tuple[str, ...]:
+        return tuple(normalize(str(candidate.get(key) or ""))
+                     for key in ("slug", "title_romaji", "title_english"))
+
+    exact = [candidate for candidate in candidates if wanted and wanted in fields(candidate)]
+    if len(exact) == 1:
+        return exact[0]
+    if exact:
+        return next((item for item in exact if item.get("opening_count") or item.get("ending_count")), exact[0])
+
+    partial = [
+        candidate for candidate in candidates
+        if wanted and any(wanted in value or (value and value in wanted) for value in fields(candidate))
+    ]
+    if partial:
+        return next(
+            (item for item in partial if item.get("opening_count") or item.get("ending_count")),
+            partial[0],
+        )
+
+    # The historical CLI fell back to all API results when its title filter
+    # did not match. Preserve that hands-off behavior, preferring an anime
+    # that actually exposes OP/ED videos.
+    return next(
+        (item for item in candidates if item.get("opening_count") or item.get("ending_count")),
+        candidates[0],
+    )
 
 
 def _safe_series_template_dir(series_name: str) -> Path:
@@ -204,10 +246,6 @@ def _download_selected_templates_impl(
     slug: str,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> dict:
-    candidates = search_candidates(slug)
-    matches = [candidate for candidate in candidates if candidate.get("slug") == slug]
-    if len(matches) != 1:
-        raise ValueError("The selected AnimeThemes slug could not be verified. Search again and select a valid result.")
     payload = _post_graphql(slug)
     data = payload.get("data", {}).get("search", {}).get("anime", {}).get("data", []) or []
     anime_rows = [anime for anime in data if anime.get("slug") == slug]
@@ -378,7 +416,16 @@ def _ensure_templates_impl(
         except (OSError, ValueError, AttributeError):
             manifest_slug = None
 
-    has_templates = any(video_dir.glob("*")) or any(wav_dir.glob("*.wav"))
+    video_files = [
+        item for item in video_dir.glob("*")
+        if item.is_file() and item.suffix.lower() in {".mkv", ".mp4", ".ts", ".avi", ".mov", ".webm"}
+        and item.stat().st_size > 0
+    ] if video_dir.exists() else []
+    wav_files = [
+        item for item in wav_dir.glob("*.wav")
+        if item.is_file() and item.stat().st_size > 44
+    ] if wav_dir.exists() else []
+    has_templates = bool(video_files or wav_files)
     if has_templates and (not selected_slug or selected_slug == manifest_slug):
         return series_dir
     if selected_slug:
@@ -387,21 +434,24 @@ def _ensure_templates_impl(
     if has_templates:
         return series_dir
 
-    candidates = search_candidates(series_name)
-    exact = _choose_exact_candidate(series_name, candidates)
-    if exact:
-        download_selected_templates(series_name, exact["slug"], progress)
+    query = sanitize_query_from_folder(series_name)
+    candidates = search_candidates(query)
+    automatic = _choose_automatic_candidate(series_name, candidates)
+    if automatic and automatic.get("slug"):
+        logger.info(
+            "Automatically selected AnimeThemes entry '%s' (%s) for local series '%s'.",
+            automatic.get("title_english") or automatic.get("title_romaji") or automatic["slug"],
+            automatic["slug"],
+            series_name,
+        )
+        download_selected_templates(series_name, automatic["slug"], progress)
         return series_dir
     if candidates:
-        names = ", ".join(
-            f"{candidate.get('title_english') or candidate.get('title_romaji') or candidate['slug']} "
-            f"({candidate['slug']})"
-            for candidate in candidates[:8]
-        )
-        raise RuntimeError(
-            f"AnimeThemes match is ambiguous for '{series_name}'. Select an anime slug explicitly. Candidates: {names}"
-        )
-    raise RuntimeError(f"No templates found for '{series_name}'. Add templates or search AnimeThemes first.")
+        raise RuntimeError(f"AnimeThemes returned results but none contained a usable slug for '{series_name}'.")
+    raise RuntimeError(
+        f"No AnimeThemes templates were found for '{series_name}' "
+        f"(search term: '{query}'). Check the series folder name or AnimeThemes connectivity."
+    )
 
 
 def ensure_templates(
