@@ -82,39 +82,17 @@ def normalize(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", re.sub(r"\(\d{4}\)|\[.*?\]", "", value.lower()))
 
 
-def _choose_automatic_candidate(series_name: str, candidates: list[dict]) -> dict | None:
-    """Choose an AnimeThemes result automatically, following the former CLI ranking."""
-    if not candidates:
-        return None
-
-    wanted = normalize(sanitize_query_from_folder(series_name))
-    def fields(candidate: dict) -> tuple[str, ...]:
-        return tuple(normalize(str(candidate.get(key) or ""))
-                     for key in ("slug", "title_romaji", "title_english"))
-
-    exact = [candidate for candidate in candidates if wanted and wanted in fields(candidate)]
-    if len(exact) == 1:
-        return exact[0]
-    if exact:
-        return next((item for item in exact if item.get("opening_count") or item.get("ending_count")), exact[0])
-
-    partial = [
-        candidate for candidate in candidates
-        if wanted and any(wanted in value or (value and value in wanted) for value in fields(candidate))
-    ]
-    if partial:
-        return next(
-            (item for item in partial if item.get("opening_count") or item.get("ending_count")),
-            partial[0],
+def _select_cli_matches(series_name: str, query_term: str, anime_rows: list[dict]) -> list[dict]:
+    """Match the original CLI: keep every slug/romaji partial match, or all API results as fallback."""
+    query_clean = query_term.replace(" ", "").lower()
+    matched = [
+        anime for anime in anime_rows
+        if query_clean and (
+            query_clean in str(anime.get("slug") or "").lower()
+            or query_clean in str((anime.get("title") or {}).get("romaji") or "").replace(" ", "").lower()
         )
-
-    # The historical CLI fell back to all API results when its title filter
-    # did not match. Preserve that hands-off behavior, preferring an anime
-    # that actually exposes OP/ED videos.
-    return next(
-        (item for item in candidates if item.get("opening_count") or item.get("ending_count")),
-        candidates[0],
-    )
+    ]
+    return matched or anime_rows
 
 
 def _safe_series_template_dir(series_name: str) -> Path:
@@ -241,119 +219,129 @@ def _download(url: str, target: Path, timeout: int = 90, attempts: int = 3) -> N
     raise RuntimeError(f"Could not download template '{target.name}' after {attempts} attempts: {last_error}") from last_error
 
 
-def _download_selected_templates_impl(
+def _download_anime_rows_templates_impl(
     series_name: str,
-    slug: str,
+    anime_rows: list[dict],
     progress: Callable[[int, int, str], None] | None = None,
 ) -> dict:
-    payload = _post_graphql(slug)
-    data = payload.get("data", {}).get("search", {}).get("anime", {}).get("data", []) or []
-    anime_rows = [anime for anime in data if anime.get("slug") == slug]
-    if len(anime_rows) != 1:
-        raise ValueError("AnimeThemes did not return one unambiguous anime for the selected slug.")
-    anime = anime_rows[0]
+    """Synchronize OP/ED videos for all CLI-matched AnimeThemes results."""
+    if not anime_rows:
+        raise RuntimeError(f"No AnimeThemes entries were available for '{series_name}'.")
+
+    primary = anime_rows[0]
+    slugs = [str(item.get("slug")) for item in anime_rows if item.get("slug")]
+    tasks_by_kind: dict[str, list[tuple[str, str]]] = {"OP": [], "ED": []}
+    for anime in anime_rows:
+        for theme in anime.get("themes", []) or []:
+            kind = theme.get("type")
+            if kind not in {"OP", "ED"}:
+                continue
+            best = None
+            for entry in theme.get("entries", []) or []:
+                for video in (entry.get("videos") or {}).get("nodes", []) or []:
+                    link = video.get("link")
+                    if not link:
+                        continue
+                    filename = video.get("filename") or Path(urlparse(link).path).name
+                    try:
+                        resolution = int(video.get("resolution") or 0)
+                    except (TypeError, ValueError):
+                        resolution = 0
+                    is_nc = "NC" in filename.upper()
+                    score = (10000 if is_nc else 0) + resolution
+                    if best is None or score > best[0]:
+                        best = (score, str(link), str(filename))
+            if best:
+                tasks_by_kind[kind].append((best[1], best[2]))
+
+    # The CLI grouped all OPs first, then all EDs, numbering across every
+    # matched anime rather than reusing each anime's theme sequence number.
+    tasks = [
+        (kind, sequence, link, filename)
+        for kind in ("OP", "ED")
+        for sequence, (link, filename) in enumerate(tasks_by_kind[kind], start=1)
+    ]
+    if not tasks:
+        raise RuntimeError(f"No OP/ED video templates were found for '{series_name}'.")
 
     target_dir = _safe_series_template_dir(series_name)
     template_root = target_dir.parent
     template_root.mkdir(parents=True, exist_ok=True)
+    old_manifest: dict = {}
+    manifest_path = target_dir / "template_manifest.json"
+    try:
+        value = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+        old_manifest = value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        old_manifest = {}
+    old_sources = old_manifest.get("video_sources")
+    old_sources = old_sources if isinstance(old_sources, dict) else {}
+
     staging = template_root / f".{target_dir.name}.staging-{uuid.uuid4().hex[:10]}"
     video_dir = staging / "video_files"
     songs_dir = staging / "songs_files"
     video_dir.mkdir(parents=True, exist_ok=True)
     songs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Keep user-supplied WAVs and the prior conversion manifest. The analyzer
-    # compares video fingerprints and regenerates only WAVs whose source changed.
+    # Keep hand-supplied WAVs and the source fingerprints of converted WAVs.
     old_songs_dir = target_dir / "songs_files"
     if old_songs_dir.is_dir():
         shutil.copytree(old_songs_dir, songs_dir, dirs_exist_ok=True)
 
-    tasks = []
-    for theme in anime.get("themes", []) or []:
-        kind = theme.get("type")
-        if kind not in {"OP", "ED"}:
-            continue
-        best = None
-        for entry in theme.get("entries", []) or []:
-            for video in (entry.get("videos") or {}).get("nodes", []) or []:
-                link = video.get("link")
-                if not link:
-                    continue
-                filename = video.get("filename") or ""
-                try:
-                    resolution = int(video.get("resolution") or 0)
-                except (TypeError, ValueError):
-                    resolution = 0
-                score = (10000 if "NC" in filename.upper() else 0) + resolution
-                if best is None or score > best[0]:
-                    best = (score, link, filename)
-        if best:
-            tasks.append((kind, int(theme.get("sequence") or 1), best[1], best[2]))
-
-    unique = {}
-    for task in tasks:
-        unique[(task[0], task[1])] = task
-    tasks = sorted(unique.values(), key=lambda item: (item[0], item[1]))
-    if not tasks:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise RuntimeError(f"No OP/ED video templates were found for '{series_name}'.")
-
-    successes = []
+    successes: list[str] = []
+    video_sources: dict[str, str] = {}
     try:
+        safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", series_name).strip(" .") or "anime"
         for index, (kind, sequence, url, filename) in enumerate(tasks, 1):
             suffix = Path(filename).suffix.lower() if filename else Path(urlparse(url).path).suffix.lower()
             if not suffix or len(suffix) > 8 or not re.fullmatch(r"\.[a-z0-9]{1,7}", suffix):
                 suffix = ".webm"
-            safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", series_name).strip(" .") or "anime"
             target = video_dir / f"{safe_name} - {kind}{sequence}{suffix}"
-            _download(url, target)
+            previous_video = target_dir / "video_files" / target.name
+            if (
+                old_sources.get(target.name) == url
+                and previous_video.is_file()
+                and previous_video.stat().st_size > 0
+            ):
+                shutil.copy2(previous_video, target)
+            else:
+                _download(url, target)
             successes.append(str(target))
+            video_sources[target.name] = url
             if progress:
                 progress(index, len(tasks), target.name)
 
-        # Match the CLI workflow: once AnimeThemes videos are synchronized,
-        # prepare their WAV counterparts immediately with the existing audio
-        # conversion function. The OP/ED detector itself is not involved here.
-        song_templates = []
-        audio_preparation_error = None
-        audio_preparation_warning = None
+        # Convert as part of the synchronization flow, before a series analysis
+        # can pass any WAV to the detector.
+        cfg = load_config()
+        song_templates = prepare_song_templates(
+            staging,
+            Path(cfg["plugins_path"]).expanduser().resolve(),
+            on_template_progress=progress,
+        )
+        conversion_manifest = staging / "songs_files" / ".template_wav_manifest.json"
         try:
-            cfg = load_config()
-            song_templates = prepare_song_templates(
-                staging,
-                Path(cfg["plugins_path"]).expanduser().resolve(),
-                on_template_progress=progress,
+            converted_sources = json.loads(conversion_manifest.read_text(encoding="utf-8"))
+            converted_count = len(converted_sources) if isinstance(converted_sources, dict) else 0
+        except (OSError, ValueError):
+            converted_count = 0
+        if converted_count < len(successes):
+            logger.warning(
+                "Only %s of %s AnimeThemes videos have a converted WAV for %s.",
+                converted_count,
+                len(successes),
+                series_name,
             )
-        except InterruptedError:
-            # A cancelled series job must not silently turn into a successful
-            # template download.
-            raise
-        except Exception as exc:
-            # Keep the downloaded source videos usable. A later analysis can
-            # retry WAV preparation after the missing multimedia tool is fixed.
-            audio_preparation_error = str(exc)
-            logger.exception("Could not prepare WAV templates for %s.", series_name)
-
-        if not audio_preparation_error:
-            conversion_manifest = staging / "songs_files" / ".template_wav_manifest.json"
-            try:
-                converted_sources = json.loads(conversion_manifest.read_text(encoding="utf-8"))
-                converted_count = len(converted_sources) if isinstance(converted_sources, dict) else 0
-            except (OSError, ValueError):
-                converted_count = 0
-            if converted_count < len(successes):
-                audio_preparation_warning = (
-                    f"Only {converted_count} of {len(successes)} downloaded video templates "
-                    "were converted to WAV. Check FFmpeg and the application logs."
-                )
 
         manifest = {
             "provider": "AnimeThemes",
-            "anime_slug": slug,
-            "title_romaji": (anime.get("title") or {}).get("romaji"),
-            "title_english": (anime.get("title") or {}).get("english"),
+            "anime_slug": primary.get("slug"),
+            "anime_slugs": slugs,
+            "title_romaji": (primary.get("title") or {}).get("romaji"),
+            "title_english": (primary.get("title") or {}).get("english"),
             "downloaded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "video_files": [Path(path).name for path in successes],
+            "video_sources": video_sources,
         }
         (staging / "template_manifest.json").write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -374,19 +362,33 @@ def _download_selected_templates_impl(
 
         return {
             "series_name": series_name,
-            "anime_slug": slug,
+            "anime_slug": primary.get("slug"),
+            "anime_slugs": slugs,
             "downloaded": len(successes),
             "files": [str(target_dir / "video_files" / Path(path).name) for path in successes],
             "video_files_dir": str(target_dir / "video_files"),
             "songs_files_dir": str(target_dir / "songs_files"),
             "song_templates": len(song_templates),
-            "audio_preparation_error": audio_preparation_error,
-            "audio_preparation_warning": audio_preparation_warning,
+            "audio_preparation_error": None,
+            "audio_preparation_warning": None,
             "manifest": str(target_dir / "template_manifest.json"),
         }
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+
+
+def _download_selected_templates_impl(
+    series_name: str,
+    slug: str,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> dict:
+    payload = _post_graphql(slug)
+    rows = payload.get("data", {}).get("search", {}).get("anime", {}).get("data", []) or []
+    anime_rows = [anime for anime in rows if anime.get("slug") == slug]
+    if len(anime_rows) != 1:
+        raise ValueError("AnimeThemes did not return one unambiguous anime for the selected slug.")
+    return _download_anime_rows_templates_impl(series_name, anime_rows, progress)
 
 
 def download_selected_templates(
@@ -409,12 +411,12 @@ def _ensure_templates_impl(
     video_dir = series_dir / "video_files"
     wav_dir = series_dir / "songs_files"
     manifest_path = series_dir / "template_manifest.json"
-    manifest_slug = None
-    if manifest_path.exists():
-        try:
-            manifest_slug = json.loads(manifest_path.read_text(encoding="utf-8")).get("anime_slug")
-        except (OSError, ValueError, AttributeError):
-            manifest_slug = None
+    manifest_provider = None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+        manifest_provider = manifest.get("provider") if isinstance(manifest, dict) else None
+    except (OSError, ValueError, AttributeError):
+        manifest = {}
 
     video_files = [
         item for item in video_dir.glob("*")
@@ -426,32 +428,38 @@ def _ensure_templates_impl(
         if item.is_file() and item.stat().st_size > 44
     ] if wav_dir.exists() else []
     has_templates = bool(video_files or wav_files)
-    if has_templates and (not selected_slug or selected_slug == manifest_slug):
-        return series_dir
+
     if selected_slug:
         download_selected_templates(series_name, selected_slug, progress)
         return series_dir
-    if has_templates:
+
+    # Preserve user-managed local templates. AnimeThemes-managed templates,
+    # however, are synchronized on every Analyze action like the original CLI.
+    if has_templates and manifest_provider != "AnimeThemes":
         return series_dir
 
     query = sanitize_query_from_folder(series_name)
-    candidates = search_candidates(query)
-    automatic = _choose_automatic_candidate(series_name, candidates)
-    if automatic and automatic.get("slug"):
-        logger.info(
-            "Automatically selected AnimeThemes entry '%s' (%s) for local series '%s'.",
-            automatic.get("title_english") or automatic.get("title_romaji") or automatic["slug"],
-            automatic["slug"],
-            series_name,
+    if not query:
+        raise RuntimeError(f"The series folder name '{series_name}' produces an empty AnimeThemes search term.")
+    payload = _post_graphql(query)
+    anime_rows = payload.get("data", {}).get("search", {}).get("anime", {}).get("data", []) or []
+    if not anime_rows:
+        raise RuntimeError(
+            f"No AnimeThemes templates were found for '{series_name}' "
+            f"(search term: '{query}'). Check the series folder name or AnimeThemes connectivity."
         )
-        download_selected_templates(series_name, automatic["slug"], progress)
-        return series_dir
-    if candidates:
-        raise RuntimeError(f"AnimeThemes returned results but none contained a usable slug for '{series_name}'.")
-    raise RuntimeError(
-        f"No AnimeThemes templates were found for '{series_name}' "
-        f"(search term: '{query}'). Check the series folder name or AnimeThemes connectivity."
-    )
+
+    # Match the CLI exactly: all slug/romaji partial matches are synchronized;
+    # if none match, the API's result list is used as the fallback.
+    matched_animes = _select_cli_matches(series_name, query, anime_rows)
+    result = _download_anime_rows_templates_impl(series_name, matched_animes, progress)
+    if result.get("audio_preparation_error"):
+        raise RuntimeError(
+            f"AnimeThemes videos were downloaded but WAV preparation failed: {result['audio_preparation_error']}"
+        )
+    if result.get("audio_preparation_warning"):
+        raise RuntimeError(result["audio_preparation_warning"])
+    return series_dir
 
 
 def ensure_templates(
