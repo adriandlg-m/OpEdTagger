@@ -74,6 +74,10 @@ def test_template_download_creates_both_folders_and_preserves_existing_song_file
         wav_dir = template_dir / "songs_files"
         generated = wav_dir / "Example Show - OP1.wav"
         generated.write_bytes(b"generated-wav")
+        (wav_dir / ".template_wav_manifest.json").write_text(
+            '{"Example Show - OP1.webm": {}}',
+            encoding="utf-8",
+        )
         if on_template_progress:
             on_template_progress(1, 1, generated.name)
         return sorted(wav_dir.glob("*.wav"))
@@ -86,6 +90,7 @@ def test_template_download_creates_both_folders_and_preserves_existing_song_file
     assert result["downloaded"] == 1
     assert result["song_templates"] == 2
     assert result["audio_preparation_error"] is None
+    assert result["audio_preparation_warning"] is None
     assert (series_dir / "video_files" / "Example Show - OP1.webm").read_bytes() == b"downloaded-video"
     assert (series_dir / "songs_files" / "manual-reference.wav").read_bytes() == b"manual-wav"
     assert (series_dir / "songs_files" / "Example Show - OP1.wav").read_bytes() == b"generated-wav"

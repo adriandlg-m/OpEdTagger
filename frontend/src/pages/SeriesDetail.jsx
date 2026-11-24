@@ -284,8 +284,8 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
       await onRefresh?.();
       const preparedSongs = Number(result.song_templates || 0);
       const templateMessage = `Templates descargados: ${result.downloaded} archivo(s) · WAV disponibles: ${preparedSongs}.`;
-      if (result.audio_preparation_error || preparedSongs === 0) {
-        onToast(`${templateMessage} ${result.audio_preparation_error || 'No se generaron WAV; revisa la disponibilidad de FFmpeg.'}`, 'warning');
+      if (result.audio_preparation_error || result.audio_preparation_warning || preparedSongs === 0) {
+        onToast(`${templateMessage} ${result.audio_preparation_error || result.audio_preparation_warning || 'No se generaron WAV; revisa la disponibilidad de FFmpeg.'}`, 'warning');
       } else {
         onToast(`${templateMessage} ${candidate.title_english || candidate.title_romaji || candidate.slug}`, 'success');
       }

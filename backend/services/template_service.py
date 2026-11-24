@@ -278,6 +278,7 @@ def _download_selected_templates_impl(
         # conversion function. The OP/ED detector itself is not involved here.
         song_templates = []
         audio_preparation_error = None
+        audio_preparation_warning = None
         try:
             cfg = load_config()
             song_templates = prepare_song_templates(
@@ -285,11 +286,28 @@ def _download_selected_templates_impl(
                 Path(cfg["plugins_path"]).expanduser().resolve(),
                 on_template_progress=progress,
             )
+        except InterruptedError:
+            # A cancelled series job must not silently turn into a successful
+            # template download.
+            raise
         except Exception as exc:
             # Keep the downloaded source videos usable. A later analysis can
             # retry WAV preparation after the missing multimedia tool is fixed.
             audio_preparation_error = str(exc)
             logger.exception("Could not prepare WAV templates for %s.", series_name)
+
+        if not audio_preparation_error:
+            conversion_manifest = staging / "songs_files" / ".template_wav_manifest.json"
+            try:
+                converted_sources = json.loads(conversion_manifest.read_text(encoding="utf-8"))
+                converted_count = len(converted_sources) if isinstance(converted_sources, dict) else 0
+            except (OSError, ValueError):
+                converted_count = 0
+            if converted_count < len(successes):
+                audio_preparation_warning = (
+                    f"Only {converted_count} of {len(successes)} downloaded video templates "
+                    "were converted to WAV. Check FFmpeg and the application logs."
+                )
 
         manifest = {
             "provider": "AnimeThemes",
@@ -325,6 +343,7 @@ def _download_selected_templates_impl(
             "songs_files_dir": str(target_dir / "songs_files"),
             "song_templates": len(song_templates),
             "audio_preparation_error": audio_preparation_error,
+            "audio_preparation_warning": audio_preparation_warning,
             "manifest": str(target_dir / "template_manifest.json"),
         }
     except Exception:
