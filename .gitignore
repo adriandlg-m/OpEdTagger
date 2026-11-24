@@ -24,6 +24,7 @@ dist/
 
 # Local application configuration and data
 /plugins/
+/backups/
 /Templates/
 /template/
 /templates/

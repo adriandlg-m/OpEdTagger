@@ -23,7 +23,7 @@ def system_health():
 
     plugins = Path(cfg["plugins_path"])
     tools = {}
-    for name in ("ffmpeg", "ffprobe", "mkvpropedit", "mkvmerge"):
+    for name in ("ffmpeg", "ffprobe", "mkvpropedit", "mkvmerge", "mkvextract"):
         found = None
         if plugins.exists():
             candidates = list(plugins.rglob(name + ".exe")) + list(plugins.rglob(name))

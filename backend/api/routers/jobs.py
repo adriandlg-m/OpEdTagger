@@ -53,3 +53,22 @@ def start_batch_injection(series_name: str, body: BatchInjectionRequest):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+
+@router.post("/series/{series_name}/inject/preflight")
+def preview_batch_injection(series_name: str, body: BatchInjectionRequest):
+    try:
+        return job_service.preview_injection_job(
+            series_name,
+            body.episode_ids,
+            replace_existing_chapters=body.replace_existing_chapters,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

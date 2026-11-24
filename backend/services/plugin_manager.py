@@ -263,14 +263,15 @@ def _install_mkvtoolnix(plugins_root: Path) -> dict[str, str]:
         _extract_7z_safely(archive, extract_dir)
         merge_matches = list(extract_dir.rglob("mkvmerge.exe"))
         propedit_matches = list(extract_dir.rglob("mkvpropedit.exe"))
-        if not merge_matches or not propedit_matches:
-            raise RuntimeError("The MKVToolNix archive is missing mkvmerge.exe or mkvpropedit.exe.")
+        extract_matches = list(extract_dir.rglob("mkvextract.exe"))
+        if not merge_matches or not propedit_matches or not extract_matches:
+            raise RuntimeError("The MKVToolNix archive is missing mkvmerge.exe, mkvpropedit.exe or mkvextract.exe.")
         merge_dir = merge_matches[0].parent
-        if not (merge_dir / "mkvpropedit.exe").is_file():
-            raise RuntimeError("mkvmerge.exe and mkvpropedit.exe were not found in the same portable directory.")
+        if not all((merge_dir / f"{name}.exe").is_file() for name in ("mkvpropedit", "mkvextract")):
+            raise RuntimeError("mkvmerge.exe, mkvpropedit.exe and mkvextract.exe were not found in the same portable directory.")
         shutil.copytree(merge_dir, install_dir)
 
-        for name in ("mkvmerge", "mkvpropedit"):
+        for name in ("mkvmerge", "mkvpropedit", "mkvextract"):
             ok, detail = _version_ok(install_dir / f"{name}.exe", ("--version",))
             if not ok:
                 raise RuntimeError(f"Downloaded {name}.exe did not pass its version check: {detail}")
@@ -280,12 +281,13 @@ def _install_mkvtoolnix(plugins_root: Path) -> dict[str, str]:
             "sha256": actual_hash,
             "mkvmerge": str(plugins_root / "MKVToolNix" / "mkvmerge.exe"),
             "mkvpropedit": str(plugins_root / "MKVToolNix" / "mkvpropedit.exe"),
+            "mkvextract": str(plugins_root / "MKVToolNix" / "mkvextract.exe"),
         }
 
 
 def _inspect_local_tools(plugins_root: Path) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
-    for name in ("ffmpeg", "ffprobe", "mkvmerge", "mkvpropedit"):
+    for name in ("ffmpeg", "ffprobe", "mkvmerge", "mkvpropedit", "mkvextract"):
         path = find_local_tool(plugins_root, name)
         if path is None:
             system_path = shutil.which(name) or shutil.which(f"{name}.exe")
@@ -375,7 +377,7 @@ def ensure_analysis_plugins(config: dict[str, Any] | None = None) -> dict[str, A
             if missing:
                 raise RuntimeError("The following analysis tools are unavailable: " + ", ".join(missing))
 
-            all_tools_ready = all(tools[name]["available"] for name in ("mkvmerge", "mkvpropedit"))
+            all_tools_ready = all(tools[name]["available"] for name in ("mkvmerge", "mkvpropedit", "mkvextract"))
             status = "ready" if all_tools_ready else "analysis_ready"
             message = (
                 "All multimedia tools are installed and verified."
@@ -406,13 +408,13 @@ def ensure_chapter_plugins(config: dict[str, Any] | None = None) -> dict[str, An
     with _INSTALL_LOCK:
         try:
             tools = _inspect_local_tools(plugins_root)
-            if not tools["mkvmerge"]["available"] or not tools["mkvpropedit"]["available"]:
+            if not all(tools[name]["available"] for name in ("mkvmerge", "mkvpropedit", "mkvextract")):
                 if not _can_auto_install():
                     raise RuntimeError("MKVToolNix (mkvmerge and mkvpropedit) must be installed in plugins_path or available on PATH on this platform.")
                 _install_mkvtoolnix(plugins_root)
                 tools = _inspect_local_tools(plugins_root)
 
-            missing = [name for name in ("mkvmerge", "mkvpropedit") if not tools[name]["available"]]
+            missing = [name for name in ("mkvmerge", "mkvpropedit", "mkvextract") if not tools[name]["available"]]
             if missing:
                 raise RuntimeError("The following chapter tools are unavailable: " + ", ".join(missing))
             _update_manager_state(

@@ -1,7 +1,11 @@
 from pathlib import Path
+import os
+import subprocess
+import sys
 from fastapi import APIRouter, HTTPException
 from backend.api.schemas.models import SettingsUpdate
 from backend.infrastructure.config import load_config, save_config, app_data_dir
+from core.backup_manager import ensure_backup_layout, get_backup_summary
 from backend.infrastructure.database import db_session, utc_now
 from backend.infrastructure.config import resolve_library_path
 
@@ -49,3 +53,40 @@ def save_preferences(payload: dict):
                          "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at",
                          (key, json.dumps(value), utc_now()))
     return payload
+
+
+
+@router.get("/backups")
+def get_backups_summary():
+    cfg = load_config()
+    try:
+        return get_backup_summary(Path(cfg["backup_path"]))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not inspect backup storage: {exc}") from exc
+
+
+@router.post("/backups/open")
+def open_backups_folder(payload: dict | None = None):
+    cfg = load_config()
+    section = str((payload or {}).get("section") or "root")
+    directories = ensure_backup_layout(Path(cfg["backup_path"]))
+    allowed = {
+        "root": Path(cfg["backup_path"]).expanduser().resolve(),
+        "temporary": directories["temporary"],
+        "recovery": directories["recovery"],
+        "chapters": directories["chapters"],
+    }
+    target = allowed.get(section)
+    if target is None:
+        raise HTTPException(status_code=422, detail="Unknown backup folder section.")
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            os.startfile(str(target))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(target)])
+        else:
+            subprocess.Popen(["xdg-open", str(target)])
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not open the backup folder: {exc}") from exc
+    return {"opened": True, "path": str(target)}

@@ -53,6 +53,26 @@ class JobService:
                 "WHERE injection_status='IN_PROGRESS'",
                 ("The application stopped during MKV injection. Inspect the original file and the backup before attempting another injection.", utc_now()),
             )
+        try:
+            from backend.infrastructure.config import load_config
+            from core.media_tools import reconcile_backup_transactions
+
+            def get_episode_injection_status(episode_id: int):
+                with db_session() as conn:
+                    status_row = conn.execute(
+                        "SELECT injection_status FROM analysis_results WHERE episode_id=?",
+                        (episode_id,),
+                    ).fetchone()
+                return status_row["injection_status"] if status_row else None
+
+            recovery_result = reconcile_backup_transactions(
+                Path(load_config()["backup_path"]),
+                get_episode_injection_status,
+            )
+            if any(recovery_result.values()):
+                log_event("WARNING", "BackupManager", "Interrupted MKV backup transactions reconciled.", detail=str(recovery_result))
+        except Exception:
+            logger.exception("Could not reconcile interrupted MKV backup transactions.")
         for row in rows:
             log_event("WARNING", "JobManager", "A job was marked interrupted during startup recovery.", job_id=row["id"])
 
@@ -87,6 +107,21 @@ class JobService:
         log_event("INFO", "JobManager", "Series analysis job queued.", job_id=job_id, series_name=series_name)
         return self.get_job(job_id) or {"id": job_id, "status": "queued"}
 
+
+    def preview_injection_job(
+        self,
+        series_name: str,
+        episode_ids: list[int],
+        *,
+        replace_existing_chapters: bool = False,
+    ) -> dict:
+        from backend.services.chapter_service import preview_batch_injection
+
+        return preview_batch_injection(
+            series_name,
+            episode_ids,
+            replace_existing_chapters=replace_existing_chapters,
+        )
 
     def create_injection_job(
         self,
@@ -124,6 +159,19 @@ class JobService:
                 raise ValueError(
                     f"{episode['file_name']}: it is already injected or requires injection recovery."
                 )
+
+        from core.backup_manager import estimate_sequential_backup_space
+        from backend.infrastructure.config import load_config
+        backup_estimate = estimate_sequential_backup_space(
+            [Path(episodes_by_id[episode_id]["file_path"]) for episode_id in selected_ids],
+            Path(load_config()["backup_path"]),
+        )
+        if not backup_estimate["enough_space"]:
+            raise ValueError(
+                "Insufficient free space for the temporary backup of the largest selected MKV. "
+                f"Required {backup_estimate['required_free_bytes'] / (1024 ** 3):.2f} GiB; "
+                f"available {backup_estimate['available_free_bytes'] / (1024 ** 3):.2f} GiB."
+            )
 
         with db_session() as conn:
             active = conn.execute(
