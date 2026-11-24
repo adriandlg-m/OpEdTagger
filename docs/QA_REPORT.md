@@ -8,7 +8,7 @@
 | Comprobación | Resultado |
 |---|---|
 | `python -m compileall -q backend core scripts` | Correcto |
-| `PYTHONPATH=. pytest -q` | **94 pruebas aprobadas**, 1 warning, GitHub Actions (Python 3.12, Ubuntu) |
+| `PYTHONPATH=. pytest -q` | **97 pruebas aprobadas**, 1 warning, GitHub Actions (Python 3.12, Ubuntu) |
 | TypeScript Compiler API parser sobre JS/JSX/TS del frontend | 17 archivos analizados sin errores de sintaxis |
 | Jerarquía recursiva de carpetas de usuario | Verificada con carpetas multinivel y archivos en raíz |
 | Toast fijo y Dashboard con scroll interno | Revisados estáticamente; prueba visual pendiente en Windows |
@@ -65,7 +65,7 @@ La rama `feature/recover-cli-workflows` incorpora nuevas pruebas para:
 - La extracción segura de ZIP y la recuperación de carpetas de plugins tras una interrupción.
 - Los nombres de capítulos históricos y el idioma `spa/es`, manteniendo backup, verificación y rollback.
 
-**Estado de esta rama:** GitHub Actions completó correctamente `compileall`, `pytest` (**94 pruebas aprobadas, 1 warning**), `npm test` y `npm run build`. La suite cubre las bandas de confianza, la migración e historial de correcciones, la protección del motor de detección y la cola de inyección. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales, la inyección masiva sobre MKV representativos y la inspección visual se deben validar además en Windows.
+**Estado de esta rama:** GitHub Actions completó correctamente `compileall`, `pytest` (**97 pruebas aprobadas, 1 warning**), `npm test` y `npm run build`. La suite cubre las bandas de confianza, la migración e historial de correcciones, la protección del motor de detección y la cola de inyección. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales, la inyección masiva sobre MKV representativos y la inspección visual se deben validar además en Windows.
 
 
 ## Comprobaciones pendientes

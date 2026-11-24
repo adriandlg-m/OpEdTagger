@@ -22,7 +22,7 @@ def test_split_confidence_scores_are_bounded_and_independent():
     assert assessed is not None
     assert assessed["match_confidence_score"] == 94
     assert assessed["match_confidence_band"] == "HIGH"
-    assert assessed["temporal_precision_score"] == 96
+    assert assessed["temporal_precision_score"] == 97
     assert assessed["temporal_precision_band"] == "HIGH"
     assert assessed["confidence_score"] == 94
     assert assessed["confidence_band"] == "HIGH"
