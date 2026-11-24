@@ -242,6 +242,52 @@ def init_db() -> None:
                 (3, "AniList series links for on-demand metadata", utc_now()),
             )
 
+        confidence_migration_done = conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE version=4"
+        ).fetchone()
+        if not confidence_migration_done:
+            analysis_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(analysis_results)").fetchall()
+            }
+            for column, declaration in (
+                ("op_original_json", "TEXT"),
+                ("ed_original_json", "TEXT"),
+                ("confidence_version", "TEXT"),
+            ):
+                if column not in analysis_columns:
+                    conn.execute(f"ALTER TABLE analysis_results ADD COLUMN {column} {declaration}")
+
+            # Preserve last known detections as originals when upgrading.
+            conn.execute(
+                "UPDATE analysis_results SET op_original_json=op_json "
+                "WHERE op_original_json IS NULL AND op_json IS NOT NULL"
+            )
+            conn.execute(
+                "UPDATE analysis_results SET ed_original_json=ed_json "
+                "WHERE ed_original_json IS NULL AND ed_json IS NOT NULL"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS analysis_segment_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+                    segment_type TEXT NOT NULL CHECK(segment_type IN ('OP','ED')),
+                    action TEXT NOT NULL,
+                    before_json TEXT,
+                    after_json TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_analysis_segment_history_episode "
+                "ON analysis_segment_history(episode_id, id DESC)"
+            )
+            conn.execute(
+                "INSERT INTO schema_migrations(version,description,applied_at) VALUES(?,?,?)",
+                (4, "Per-segment confidence, immutable analysis snapshots and review history", utc_now()),
+            )
+
 
 def utc_now() -> str:
     from datetime import datetime, timezone
