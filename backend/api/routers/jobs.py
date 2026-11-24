@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from backend.api.schemas.models import SeriesJobRequest
+from backend.api.schemas.models import BatchInjectionRequest, SeriesJobRequest
 from backend.services.job_service import job_service
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
@@ -35,3 +35,21 @@ def cancel_job(job_id: str):
     if not job_service.cancel(job_id):
         raise HTTPException(status_code=409, detail="Job is not active or cannot be cancelled.")
     return {"job_id": job_id, "detail": "Cancellation requested."}
+
+
+@router.post("/series/{series_name}/inject", status_code=202)
+def start_batch_injection(series_name: str, body: BatchInjectionRequest):
+    try:
+        return job_service.create_injection_job(
+            series_name,
+            body.episode_ids,
+            replace_existing_chapters=body.replace_existing_chapters,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
