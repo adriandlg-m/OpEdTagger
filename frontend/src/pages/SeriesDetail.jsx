@@ -30,6 +30,17 @@ function confidenceLabel(band) {
   })[band] || 'Sin evaluar';
 }
 
+function ConfidenceSummaryGroup({ label, counts }) {
+  return (
+    <div className="confidence-summary-group">
+      <span className="confidence-summary-label">{label}</span>
+      <span className="confidence-count confidence-count-high"><strong>{counts.HIGH}</strong> altas</span>
+      <span className="confidence-count confidence-count-medium"><strong>{counts.MEDIUM}</strong> medias</span>
+      <span className="confidence-count confidence-count-low"><strong>{counts.LOW + counts.UNASSESSED}</strong> bajas / s.e.</span>
+    </div>
+  );
+}
+
 function ConfidenceMetric({ label, score, band, detail }) {
   return (
     <div className={`confidence-metric confidence-${String(band || 'UNASSESSED').toLowerCase()}`}>
@@ -87,10 +98,10 @@ function ConfidenceDetail({ label, segment, original, anomaly }) {
           detail="Evalúa si el template detectado corresponde al OP/ED."
         />
         <ConfidenceMetric
-          label="Precisión temporal estimada"
+          label="Precisión de inicio"
           score={temporalScore}
           band={temporalBand}
-          detail="Evalúa qué tan definido está el instante de inicio."
+          detail="Evalúa qué tan definido está el inicio. El final se calcula usando la duración del template."
         />
       </div>
       <div className="confidence-factor-list">
@@ -165,6 +176,20 @@ function EpisodeRow({
   };
 
   const bandClass = (band) => `confidence-inline confidence-${String(band || 'unassessed').toLowerCase()}`;
+  const renderCompactConfidence = (segment) => {
+    if (!segment) {
+      return <small className="confidence-inline confidence-unassessed">Sin coincidencia</small>;
+    }
+    return (
+      <div className="episode-confidence-inline" aria-label="Indicadores de confianza">
+        <span className="confidence-inline-label">Coincid.</span>
+        <strong className={bandClass(segment.match_confidence_band)}>{segment.match_confidence_score ?? '—'}</strong>
+        <span className="confidence-inline-divider">·</span>
+        <span className="confidence-inline-label">Inicio</span>
+        <strong className={bandClass(segment.temporal_precision_band)}>{segment.temporal_precision_score ?? '—'}</strong>
+      </div>
+    );
+  };
 
   return (
     <article className={`episode-row ${isOutlier ? 'episode-outlier' : ''} ${isProcessing ? 'episode-row-processing' : ''}`}>
@@ -187,22 +212,12 @@ function EpisodeRow({
         <div className="episode-segment">
           <span className="segment-label">Opening</span>
           <strong>{episode.opening}</strong>
-          <div className="episode-segment-confidence">
-            {episode.op ? <>
-              <small className={bandClass(episode.op.match_confidence_band)}>Coincidencia {episode.op.match_confidence_score ?? '—'}/100</small>
-              <small className={bandClass(episode.op.temporal_precision_band)}>Precisión temporal {episode.op.temporal_precision_score ?? '—'}/100</small>
-            </> : <small className="confidence-inline confidence-unassessed">Sin coincidencia</small>}
-          </div>
+          {renderCompactConfidence(episode.op)}
         </div>
         <div className="episode-segment">
           <span className="segment-label">Ending</span>
           <strong>{episode.ending}</strong>
-          <div className="episode-segment-confidence">
-            {episode.ed ? <>
-              <small className={bandClass(episode.ed.match_confidence_band)}>Coincidencia {episode.ed.match_confidence_score ?? '—'}/100</small>
-              <small className={bandClass(episode.ed.temporal_precision_band)}>Precisión temporal {episode.ed.temporal_precision_score ?? '—'}/100</small>
-            </> : <small className="confidence-inline confidence-unassessed">Sin coincidencia</small>}
-          </div>
+          {renderCompactConfidence(episode.ed)}
         </div>
         <div className="episode-status"><StatusBadge status={badgeStatus} /></div>
         <div className="episode-row-actions"><button className="icon-button expand-button" onClick={() => setExpanded((value) => !value)} aria-label="Mostrar detalles"><ChevronDown size={17} /></button></div>
@@ -437,16 +452,26 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   const isInjectionJob = activeJob?.kind === 'injection';
   const eligibleEpisodes = episodes.filter(isInjectionEligible);
   const selectedEligibleEpisodes = eligibleEpisodes.filter((episode) => selectedEpisodeIds.has(episode.id));
-  const confidenceCounts = useMemo(() => {
-    const counts = { HIGH: 0, MEDIUM: 0, LOW: 0, UNASSESSED: 0 };
+  const confidenceSummary = useMemo(() => {
+    const createCounts = () => ({ HIGH: 0, MEDIUM: 0, LOW: 0, UNASSESSED: 0 });
+    const summary = {
+      detections: 0,
+      match: createCounts(),
+      temporal: createCounts(),
+    };
     for (const episode of episodes) {
       for (const segment of [episode.op, episode.ed]) {
         if (!segment) continue;
-        const band = counts[segment.confidence_band] === undefined ? 'UNASSESSED' : segment.confidence_band;
-        counts[band] += 1;
+        summary.detections += 1;
+        const matchBand = summary.match[segment.match_confidence_band] === undefined
+          ? 'UNASSESSED' : segment.match_confidence_band;
+        const temporalBand = summary.temporal[segment.temporal_precision_band] === undefined
+          ? 'UNASSESSED' : segment.temporal_precision_band;
+        summary.match[matchBand] += 1;
+        summary.temporal[temporalBand] += 1;
       }
     }
-    return counts;
+    return summary;
   }, [episodes]);
   const reviewQueueCount = episodes.filter((episode) =>
     ['PENDING', 'REVIEW_RECOMMENDED'].includes(episode.review_status)
@@ -815,10 +840,10 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
         </div>
         <div className="confidence-summary-bar">
           <div className="confidence-summary-metrics">
-            <span className="confidence-count confidence-count-high"><strong>{confidenceCounts.HIGH}</strong> altas</span>
-            <span className="confidence-count confidence-count-medium"><strong>{confidenceCounts.MEDIUM}</strong> medias</span>
-            <span className="confidence-count confidence-count-low"><strong>{confidenceCounts.LOW + confidenceCounts.UNASSESSED}</strong> bajas / sin evaluar</span>
-            <span className="confidence-review-count">{reviewQueueCount} episodios para revisar</span>
+            <span className="confidence-summary-detections">{confidenceSummary.detections} detecciones</span>
+            <ConfidenceSummaryGroup label="Coincidencia" counts={confidenceSummary.match} />
+            <ConfidenceSummaryGroup label="Inicio" counts={confidenceSummary.temporal} />
+            <span className="confidence-review-count">{reviewQueueCount} episodios con avisos</span>
           </div>
           <div className="confidence-batch-actions">
             <button className="button button-ghost button-small" onClick={() => setStatusFilter('Necesita revisión')} disabled={!reviewQueueCount}>Ver excepciones</button>
