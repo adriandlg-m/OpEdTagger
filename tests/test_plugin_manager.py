@@ -61,6 +61,63 @@ def test_plugin_directory_recovery_removes_previous_after_new_install_exists(tmp
     assert not previous.exists()
 
 
+
+def _tool_snapshot(*, ffmpeg=True, ffprobe=True, mkvmerge=False, mkvpropedit=False):
+    values = {
+        "ffmpeg": ffmpeg,
+        "ffprobe": ffprobe,
+        "mkvmerge": mkvmerge,
+        "mkvpropedit": mkvpropedit,
+    }
+    return {
+        name: {"available": available, "path": f"/plugins/{name}", "version": "test"}
+        for name, available in values.items()
+    }
+
+
+def test_analysis_setup_does_not_download_mkvtoolnix(tmp_path, monkeypatch):
+    tools = _tool_snapshot()
+    monkeypatch.setattr(plugin_manager, "_can_auto_install", lambda: True)
+    monkeypatch.setattr(plugin_manager, "_clean_stale_staging", lambda _root: None)
+    monkeypatch.setattr(plugin_manager, "_inspect_local_tools", lambda _root: {
+        name: dict(value) for name, value in tools.items()
+    })
+    monkeypatch.setattr(
+        plugin_manager,
+        "_install_mkvtoolnix",
+        lambda _root: pytest.fail("MKVToolNix must remain lazy until chapter injection."),
+    )
+
+    state = plugin_manager.ensure_analysis_plugins({"plugins_path": str(tmp_path / "plugins")})
+
+    assert state["status"] == "analysis_ready"
+    assert state["installed"]["ffmpeg"]["available"]
+    assert state["installed"]["ffprobe"]["available"]
+    assert not state["installed"]["mkvmerge"]["available"]
+
+
+def test_chapter_setup_installs_mkvtoolnix_on_demand(tmp_path, monkeypatch):
+    tools = _tool_snapshot()
+    monkeypatch.setattr(plugin_manager, "_can_auto_install", lambda: True)
+    monkeypatch.setattr(plugin_manager, "_clean_stale_staging", lambda _root: None)
+
+    def inspect(_root):
+        return {name: dict(value) for name, value in tools.items()}
+
+    def install_mkv(_root):
+        tools["mkvmerge"]["available"] = True
+        tools["mkvpropedit"]["available"] = True
+
+    monkeypatch.setattr(plugin_manager, "_inspect_local_tools", inspect)
+    monkeypatch.setattr(plugin_manager, "_install_mkvtoolnix", install_mkv)
+
+    state = plugin_manager.ensure_chapter_plugins({"plugins_path": str(tmp_path / "plugins")})
+
+    assert state["status"] == "ready"
+    assert state["installed"]["mkvmerge"]["available"]
+    assert state["installed"]["mkvpropedit"]["available"]
+
+
 def test_plugin_status_reports_local_paths_and_missing_tools(tmp_path, monkeypatch):
     monkeypatch.setattr(plugin_manager, "load_config", lambda: {"plugins_path": str(tmp_path / "plugins")})
     status = plugin_manager.plugin_manager_status()
