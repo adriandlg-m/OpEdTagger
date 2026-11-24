@@ -354,14 +354,11 @@ def ensure_analysis_plugins(config: dict[str, Any] | None = None) -> dict[str, A
     cfg = config or load_config()
     plugins_root = Path(cfg["plugins_path"]).expanduser().resolve()
     with _INSTALL_LOCK:
-        with _STATE_LOCK:
-            _STATE = {
-                "status": "checking",
-                "last_error": None,
-                "last_check": None,
-                "installed": _inspect_local_tools(plugins_root),
-                "message": "Checking FFmpeg and FFprobe required for audio analysis.",
-            }
+        _update_manager_state(
+            "checking",
+            "Checking FFmpeg and FFprobe required for audio analysis.",
+            _inspect_local_tools(plugins_root),
+        )
 
         try:
             plugins_root.mkdir(parents=True, exist_ok=True)
