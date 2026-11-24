@@ -31,7 +31,20 @@ function confidenceLabel(band) {
 }
 
 function ConfidenceDetail({ label, segment, original, anomaly }) {
-  if (!segment) return null;
+  if (!segment && !original) return null;
+  if (!segment && original) {
+    return (
+      <div className="confidence-detail confidence-unassessed">
+        <div className="confidence-detail-heading">
+          <strong>{label}</strong>
+          <span>Detección descartada manualmente</span>
+        </div>
+        <p className="confidence-original-value">
+          Resultado original: {formatTimestamp(original.start)}–{formatTimestamp(original.end)}
+        </p>
+      </div>
+    );
+  }
   const score = Number.isFinite(Number(segment.confidence_score))
     ? Number(segment.confidence_score)
     : null;
@@ -93,6 +106,18 @@ function EpisodeRow({
   const hasResult = ['COMPLETED', 'NO_MATCH'].includes(episode.analysis_status);
   const legacyResult = episode.analysis_status === 'STALE' || episode.legacy_result;
   const isProcessing = processingFile && episode.file_name === processingFile;
+
+  const discardSegment = (kind) => {
+    const label = kind === 'OP' ? 'Opening' : 'Ending';
+    if (!episode[kind.toLowerCase()]) return;
+    const accepted = window.confirm(
+      `¿Descartar la detección de ${label} de ${episode.file_name}?\n\nEl timestamp original se conservará en el historial y no se incluirá en los capítulos.`
+    );
+    if (!accepted) return;
+    onCorrect(episode, kind === 'OP'
+      ? { op: null, ed: episode.ed }
+      : { op: episode.op, ed: null });
+  };
 
   const saveCorrections = () => {
     const build = (start, end, existing, label) => {
@@ -187,6 +212,8 @@ function EpisodeRow({
             </div>}
             <div className="inline-actions" style={{ marginTop: 12, flexWrap: 'wrap' }}>
               {hasResult && <button className="button button-secondary button-small" onClick={saveCorrections} disabled={reviewLocked}>Guardar correcciones</button>}
+              {episode.op && <button className="button button-ghost button-small" onClick={() => discardSegment('OP')} disabled={reviewLocked}>Descartar Opening</button>}
+              {episode.ed && <button className="button button-ghost button-small" onClick={() => discardSegment('ED')} disabled={reviewLocked}>Descartar Ending</button>}
               {legacyResult && <span className="muted-score">Reanaliza el episodio para habilitar la revisión segura.</span>}
               {(needsReview || reviewRecommended) && <button className="button button-primary button-small" onClick={() => onApprove(episode)} disabled={reviewLocked}><CheckCircle2 size={13} /> Confirmar manualmente</button>}
               {canInject && !injected && !reviewLocked && <button className="button button-secondary button-small" onClick={() => onInject(episode)}><ShieldCheck size={13} /> Inyectar este episodio</button>}
@@ -354,9 +381,13 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
       || ep.file_name.toLowerCase().includes(query)
       || String(ep.folder_path || '').toLowerCase().includes(query);
     const matchesStatus = statusFilter === 'Todos los estados'
-      || (statusFilter === 'Necesita revisión'
-        ? ['PENDING', 'REVIEW_RECOMMENDED'].includes(ep.review_status)
-        : ep.status === statusFilter);
+      || (['Necesita revisión', 'Revisión necesaria'].includes(statusFilter)
+        ? (statusFilter === 'Necesita revisión'
+          ? ['PENDING', 'REVIEW_RECOMMENDED'].includes(ep.review_status)
+          : ep.review_status === 'PENDING')
+        : statusFilter === 'Revisión recomendada'
+          ? ep.review_status === 'REVIEW_RECOMMENDED'
+          : ep.status === statusFilter);
     return matchesText && matchesStatus;
   }), [episodes, search, statusFilter]);
   const folderTree = useMemo(() => buildFolderTree(filtered), [filtered]);
@@ -684,7 +715,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
         <div className="panel-toolbar episode-toolbar">
           <div className="panel-title-wrap"><div className="panel-title-icon"><FolderOpen size={17} /></div><div><h2>Contenido de la serie</h2><p>Organizado según la estructura de carpetas de tu biblioteca</p></div></div>
           <div className="toolbar-controls"><label className="search-control"><Search size={17} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar episodio..." /></label>
-            <label className="select-control"><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>Todos los estados</option><option>Analizado</option><option>Revisión</option><option>Outlier</option><option>Sin coincidencias</option><option>Desactualizado</option><option>Pendiente</option><option>Error</option><option>Listo</option></select><ChevronDown size={15} /></label>
+            <label className="select-control"><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>Todos los estados</option><option>Preparado</option><option>Revisión necesaria</option><option>Revisión recomendada</option><option>Analizado</option><option>Revisión</option><option>Outlier</option><option>Sin coincidencias</option><option>Desactualizado</option><option>Pendiente</option><option>Error</option><option>Listo</option></select><ChevronDown size={15} /></label>
           </div>
         </div>
         <div className="confidence-summary-bar">
