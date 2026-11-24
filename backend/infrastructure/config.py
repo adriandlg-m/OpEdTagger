@@ -39,7 +39,7 @@ def default_config() -> dict[str, Any]:
     root = project_root()
     return {
         "library_path": "",
-        "template_path": str(root / "Templates"),
+        "template_path": str(root / "templates"),
         "plugins_path": str(root / "plugins"),
         "database_path": str(data_dir / "opedtagger.sqlite3"),
         "backup_path": str(data_dir / "backups"),
@@ -91,51 +91,95 @@ def _persist_config(path: Path, config: dict[str, Any]) -> None:
     temp_path.replace(path)
 
 
+def _normalize_directory_case(root: Path, desired_name: str) -> None:
+    """Normalize a managed directory's on-disk casing without losing data."""
+    if not root.is_dir():
+        return
+    matches = [item for item in root.iterdir()
+               if item.is_dir() and item.name.casefold() == desired_name.casefold()]
+    canonical = root / desired_name
+    exact = next((item for item in matches if item.name == desired_name), None)
+
+    if exact:
+        for legacy in matches:
+            if legacy != exact:
+                _merge_directory_without_overwrite(legacy, exact)
+        return
+
+    if len(matches) == 1:
+        source = matches[0]
+        temporary = root / f".{desired_name}.casefix-{uuid.uuid4().hex[:8]}"
+        try:
+            source.replace(temporary)
+            temporary.replace(canonical)
+        except Exception:
+            if temporary.exists() and not source.exists():
+                temporary.replace(source)
+            raise
+        return
+
+    if len(matches) > 1:
+        canonical.mkdir(parents=True, exist_ok=True)
+        for legacy in matches:
+            _merge_directory_without_overwrite(legacy, canonical)
+
+
 def _migrate_legacy_storage(config: dict[str, Any], stored: dict[str, Any]) -> bool:
-    """Move the default data locations to the project root without deleting the source."""
+    """Migrate legacy locations to lowercase project-root folders, preserving sources."""
     try:
         migration_version = int(stored.get("_storage_layout_version", 0) or 0)
     except (TypeError, ValueError):
         migration_version = 0
-    if migration_version >= 1:
+    if migration_version >= 2:
         return False
 
     root = project_root()
     data_dir = app_data_dir()
-    template_target = root / "Templates"
+    template_target = root / "templates"
     plugins_target = root / "plugins"
 
-    # The CLI used ./template and ./plugins. The first full-stack release
-    # placed both directories under AppData. Merge either source when present.
-    _merge_directory_without_overwrite(root / "template", template_target)
-    _merge_directory_without_overwrite(root / "templates", template_target)
-    _merge_directory_without_overwrite(data_dir / "templates", template_target)
-    _merge_directory_without_overwrite(data_dir / "plugins", plugins_target)
+    if migration_version < 1:
+        # The CLI used ./template and ./plugins. The first full-stack release
+        # used ./Templates; an intermediate release also stored these under AppData.
+        for source in (root / "template", root / "Templates", data_dir / "templates"):
+            _merge_directory_without_overwrite(source, template_target)
+        _merge_directory_without_overwrite(data_dir / "plugins", plugins_target)
 
-    changed = False
-    legacy_template_paths = (root / "template", root / "templates", data_dir / "templates")
-    legacy_plugin_paths = (data_dir / "plugins",)
-
-    for key, legacy_paths, destination in (
-        ("template_path", legacy_template_paths, template_target),
-        ("plugins_path", legacy_plugin_paths, plugins_target),
-    ):
-        raw = stored.get(key)
-        if raw is None:
-            continue
-        configured = Path(str(raw)).expanduser()
-        if not configured.is_absolute():
-            configured = root / configured
-        if any(_same_path(configured, candidate) for candidate in legacy_paths):
-            if str(config[key]) != str(destination):
+        legacy_template_paths = (root / "template", root / "Templates", data_dir / "templates")
+        legacy_plugin_paths = (data_dir / "plugins",)
+        for key, legacy_paths, destination in (
+            ("template_path", legacy_template_paths, template_target),
+            ("plugins_path", legacy_plugin_paths, plugins_target),
+        ):
+            raw = stored.get(key)
+            if raw is None:
+                continue
+            configured = Path(str(raw)).expanduser()
+            if not configured.is_absolute():
+                configured = root / configured
+            if any(_same_path(configured, candidate) for candidate in legacy_paths):
                 config[key] = str(destination)
-                changed = True
 
-    # Remember that the potentially large copy was completed. Source folders
-    # deliberately remain on disk, so this marker avoids rescanning gigabytes
-    # of templates on every API request.
-    config["_storage_layout_version"] = 1
-    return True
+    if migration_version < 2:
+        # Also handles installations that already recorded layout version 1
+        # and therefore currently point at the capitalized Templates folder.
+        raw_template = stored.get("template_path")
+        if raw_template:
+            configured = Path(str(raw_template)).expanduser()
+            if not configured.is_absolute():
+                configured = root / configured
+            old_defaults = (root / "Templates", root / "template", data_dir / "templates")
+            if any(_same_path(configured, candidate) for candidate in old_defaults):
+                config["template_path"] = str(template_target)
+
+        # On Windows path comparisons are case-insensitive, so rename the
+        # existing directory through an intermediate name to normalize its
+        # physical spelling as well as the config value.
+        _normalize_directory_case(root, "templates")
+        config["_storage_layout_version"] = 2
+        return True
+
+    return False
 
 
 def load_config() -> dict[str, Any]:
