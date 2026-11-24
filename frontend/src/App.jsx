@@ -110,6 +110,8 @@ export default function App() {
   const selectedSeriesJob = jobs.find((job) => job.kind === 'series'
     && job.series_name === selectedSeries?.name
     && ['queued', 'running', 'cancellation_requested'].includes(job.status));
+  const latestSelectedSeriesJob = jobs.find((job) => job.kind === 'series'
+    && job.series_name === selectedSeries?.name);
 
   useEffect(() => {
     let mounted = true;
@@ -271,7 +273,7 @@ export default function App() {
                   analyzed: seriesDetail.analyzed_episodes, outliers: seriesDetail.outliers }}
                 episodes={(seriesDetail.episodes || []).map(mapEpisode)} showOutliers={preferences.show_outliers !== false} onBack={() => setPage('dashboard')}
                 onStartProcessing={startProcessing} onCancelProcessing={cancelProcessing}
-                activeJob={selectedSeriesJob || activeJob} onRefresh={() => refreshSeriesDetail(selectedSeries.name)}
+                activeJob={selectedSeriesJob || latestSelectedSeriesJob || activeJob} onRefresh={() => refreshSeriesDetail(selectedSeries.name)}
                 onPosterUpdated={() => refreshDashboard(false)} onToast={notify} />
             )}
             {backendOnline && !loading && page === 'detail' && selectedSeries
