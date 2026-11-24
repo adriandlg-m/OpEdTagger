@@ -169,8 +169,15 @@ def get_backup_summary(backup_root: Path) -> dict[str, Any]:def restore_recovery
         raise ValueError("The original MKV target folder is unavailable.")
 
     backup_name = str(manifest.get("backup_file") or "original.mkv")
-    backup_path = transaction_dir / backup_name
-    if backup_path.is_symlink() or not backup_path.is_file():
+    backup_candidate = transaction_dir / backup_name
+    if backup_candidate.is_symlink():
+        raise ValueError("The recovery manifest points to a symbolic-link backup.")
+    backup_path = backup_candidate.resolve()
+    try:
+        backup_path.relative_to(transaction_dir.resolve())
+    except ValueError as exc:
+        raise ValueError("The recovery backup path escapes its transaction folder.") from exc
+    if not backup_path.is_file():
         raise FileNotFoundError("The preserved original MKV backup is missing.")
     expected_size = int(manifest.get("original_size") or -1)
     expected_fingerprint = str(manifest.get("original_fingerprint") or "")

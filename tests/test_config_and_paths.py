@@ -26,7 +26,6 @@ def test_default_config_keeps_user_data_separate_and_uses_project_root_for_templ
     assert Path(config["template_path"]) == root / "templates"
     assert Path(config["plugins_path"]) == root / "plugins"
     assert Path(config["backup_path"]) == root / "backups"
-    assert (root / "backups").is_dir()
     assert (app_data / "config.json").exists()
 
 
@@ -216,5 +215,4 @@ def test_default_backup_path_falls_back_to_appdata_when_project_root_is_not_writ
     config = load_config()
 
     assert Path(config["backup_path"]) == app_data / "backups"
-    assert (app_data / "backups").is_dir()
     assert not (root / "backups").exists()

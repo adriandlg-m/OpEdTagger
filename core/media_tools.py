@@ -333,41 +333,63 @@ def inject_chapters_with_backup(
 
 
 def finalize_injection_transaction(transaction: dict[str, Any]) -> str | None:
-    """Finalize only after the episode's SUCCEEDED state has committed to SQLite."""
+    """Finalize only after the episode's SUCCEEDED state has committed to SQLite.
+
+    This operation is idempotent: startup can retry it if the application stops
+    after moving the chapter XML but before removing the full temporary MKV.
+    """
     from core.backup_manager import write_transaction_manifest
 
     transaction_dir = Path(transaction["transaction_path"]).resolve()
     if not transaction_dir.is_dir():
         return None
     manifest = json.loads((transaction_dir / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("phase") != "VERIFIED":
+    if manifest.get("phase") not in {"VERIFIED", "DATABASE_COMMITTED"}:
         raise RuntimeError("Only a verified chapter transaction can be finalized.")
 
     backup_root = transaction_dir.parent.parent
-    archive_path = None
+    transaction_id = str(manifest["transaction_id"])
+    archive_path = manifest.get("chapter_archive_path")
     original_chapters = transaction_dir / "original_chapters.xml"
+    archive_dir = backup_root / "chapters" / transaction_id
+    destination = archive_dir / "original_chapters.xml"
+
     if original_chapters.is_file():
-        archive_dir = backup_root / "chapters" / str(manifest["transaction_id"])
-        archive_dir.mkdir(parents=True, exist_ok=False)
-        destination = archive_dir / "original_chapters.xml"
-        original_chapters.replace(destination)
-        archive_manifest = {
-            "schema_version": 1,
-            "transaction_id": manifest["transaction_id"],
-            "episode_id": manifest.get("episode_id"),
-            "file_name": manifest.get("file_name"),
-            "target_path": manifest.get("target_path"),
-            "created_at": __import__("datetime").datetime.now().astimezone().isoformat(),
-            "archive_file": "original_chapters.xml",
-        }
-        _write_json(archive_dir / "manifest.json", archive_manifest)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            if destination.read_bytes() != original_chapters.read_bytes():
+                raise RuntimeError("An existing chapter archive does not match the original-chapters XML.")
+            original_chapters.unlink()
+        else:
+            original_chapters.replace(destination)
         archive_path = str(destination)
+
+    elif manifest.get("had_existing_chapters"):
+        if not destination.is_file():
+            raise RuntimeError("The previous chapters XML is missing; the full MKV backup will be retained.")
+        archive_path = str(destination)
+
+    if archive_path:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_manifest_path = archive_dir / "manifest.json"
+        if not archive_manifest_path.exists():
+            _write_json(archive_manifest_path, {
+                "schema_version": 1,
+                "transaction_id": transaction_id,
+                "episode_id": manifest.get("episode_id"),
+                "file_name": manifest.get("file_name"),
+                "target_path": manifest.get("target_path"),
+                "created_at": __import__("datetime").datetime.now().astimezone().isoformat(),
+                "archive_file": "original_chapters.xml",
+            })
 
     manifest["phase"] = "DATABASE_COMMITTED"
     manifest["chapter_archive_path"] = archive_path
     write_transaction_manifest(transaction_dir, manifest)
     shutil.rmtree(transaction_dir)
-    return archive_path
+    return str(archive_path) if archive_path else None
+
+
 
 
 def rollback_injection_transaction(transaction: dict[str, Any], backup_root: Path) -> None:
