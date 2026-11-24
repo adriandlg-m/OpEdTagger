@@ -180,15 +180,20 @@ def normalize(value: str) -> str:
 
 
 def _select_cli_matches(series_name: str, query_term: str, anime_rows: list[dict]) -> list[dict]:
-    """Match the original CLI: keep every slug/romaji partial match, or all API results as fallback."""
+    """Match the original CLI: every partial slug/Romaji hit, else all API results."""
     query_clean = query_term.replace(" ", "").lower()
-    matched = [
-        anime for anime in anime_rows
-        if query_clean and (
-            query_clean in str(anime.get("slug") or "").lower()
-            or query_clean in str((anime.get("title") or {}).get("romaji") or "").replace(" ", "").lower()
+    matched = []
+    for anime in anime_rows:
+        title = anime.get("title") or {}
+        romaji = anime.get("title_romaji") or title.get("romaji") or ""
+        english = anime.get("title_english") or title.get("english") or ""
+        searchable = (
+            str(anime.get("slug") or "").replace(" ", "").lower(),
+            str(romaji).replace(" ", "").lower(),
+            str(english).replace(" ", "").lower(),
         )
-    ]
+        if query_clean and any(query_clean in value for value in searchable):
+            matched.append(anime)
     return matched or anime_rows
 
 
