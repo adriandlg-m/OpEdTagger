@@ -143,7 +143,7 @@ def _graphql_request(
                 exc,
             )
             if attempt < attempts:
-                time.sleep(min(float(attempt), 2.0))
+                time.sleep(min(float(2 ** attempt), 6.0))
 
     raise RuntimeError(
         f"No se pudo consultar AnimeThemes ({item}) después de {attempts} intentos: {last_error}"
@@ -159,7 +159,7 @@ def _post_graphql(
     """Search AnimeThemes using the current GraphQL schema."""
     return _graphql_request(
         SEARCH_QUERY,
-        {"q": search_term, "first": 20},
+        {"q": search_term, "first": 10},
         attempts=attempts,
         progress=progress,
         stage="searching_templates",
@@ -308,8 +308,8 @@ def _format_bytes(value: int | None) -> str:
 def _download(
     url: str,
     target: Path,
-    timeout: int = 30,
-    attempts: int = 2,
+    timeout: int = 60,
+    attempts: int = 3,
     on_progress: Callable[[int, int | None], None] | None = None,
 ) -> None:
     parsed = urlparse(url)
@@ -330,7 +330,7 @@ def _download(
                 url,
                 headers=headers,
                 stream=True,
-                timeout=(10, timeout),
+                timeout=(15, timeout),
                 **_request_options(),
             ) as response:
                 if response.status_code == 206 and current_size:
