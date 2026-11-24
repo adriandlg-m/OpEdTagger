@@ -520,7 +520,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   };
 
   const startBatchInjection = () => {
-    if (selectedEligibleEpisodes.length && !batchSubmitting) {
+    if (selectedEligibleEpisodes.length && !batchSubmitting && !active) {
       setReplaceExistingChapters(false);
       setBatchPreviewOpen(true);
     }
@@ -600,7 +600,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
                     onChange={(event) => setReplaceExistingChapters(event.target.checked)}
                     disabled={batchSubmitting}
                   />
-                  **Reemplazar capítulos existentes** en los MKV que ya contengan capítulos
+                  <strong>Reemplazar capítulos existentes</strong> en los MKV que ya contengan capítulos
                 </label>
                 <p>Se creará una copia de seguridad independiente para cada archivo. Después de escribir, OpEdTagger verificará cantidad, títulos y tiempos con FFprobe. Si no marcas esta opción, los archivos que ya tengan capítulos se registrarán como fallidos y no se modificarán.</p>
               </div>
@@ -789,8 +789,8 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
           </div>
           <div className="confidence-batch-actions">
             <button className="button button-ghost button-small" onClick={() => setStatusFilter('Necesita revisión')} disabled={!reviewQueueCount}>Ver excepciones</button>
-            <button className="button button-secondary button-small" onClick={selectAllEligible} disabled={!eligibleEpisodes.length}>Seleccionar elegibles ({eligibleEpisodes.length})</button>
-            <button className="button button-primary button-small" onClick={startBatchInjection} disabled={!selectedEligibleEpisodes.length || batchSubmitting}>
+            <button className="button button-secondary button-small" onClick={selectAllEligible} disabled={!eligibleEpisodes.length || active}>Seleccionar elegibles ({eligibleEpisodes.length})</button>
+            <button className="button button-primary button-small" onClick={startBatchInjection} disabled={!selectedEligibleEpisodes.length || batchSubmitting || active}>
               {batchSubmitting ? 'Preparando…' : `Inyectar seleccionados (${selectedEligibleEpisodes.length})`}
             </button>
             {selectedEpisodeIds.size > 0 && <button className="button button-ghost button-small" onClick={() => setSelectedEpisodeIds(new Set())}>Limpiar</button>}
