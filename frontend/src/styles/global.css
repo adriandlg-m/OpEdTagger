@@ -3985,3 +3985,35 @@ button:disabled {
 @keyframes detail-load-spin {
   to { transform: rotate(360deg); }
 }
+
+
+/* OpEdTagger: explicit progress feedback while remote template sizes are unknown. */
+.progress-track-indeterminate {
+  position: relative;
+}
+
+.progress-track-indeterminate span {
+  width: 35%;
+  animation: oped-progress-indeterminate 1.25s ease-in-out infinite alternate;
+}
+
+.processing-current-item {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.series-processing-error p {
+  margin: 7px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+@keyframes oped-progress-indeterminate {
+  from { transform: translateX(0); }
+  to { transform: translateX(185%); }
+}
