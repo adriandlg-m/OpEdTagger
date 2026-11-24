@@ -4039,7 +4039,6 @@ button:disabled {
   flex-wrap: wrap;
   gap: 4px;
   min-height: 13px;
-  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 .confidence-inline-label {

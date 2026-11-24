@@ -36,7 +36,7 @@ function ConfidenceSummaryGroup({ label, counts }) {
       <span className="confidence-summary-label">{label}</span>
       <span className="confidence-count confidence-count-high"><strong>{counts.HIGH}</strong> altas</span>
       <span className="confidence-count confidence-count-medium"><strong>{counts.MEDIUM}</strong> medias</span>
-      <span className="confidence-count confidence-count-low"><strong>{counts.LOW + counts.UNASSESSED}</strong> bajas / s.e.</span>
+      <span className="confidence-count confidence-count-low"><strong>{counts.LOW + counts.UNASSESSED}</strong> bajas / sin evaluar</span>
     </div>
   );
 }
@@ -182,11 +182,11 @@ function EpisodeRow({
     }
     return (
       <div className="episode-confidence-inline" aria-label="Indicadores de confianza">
-        <span className="confidence-inline-label">Coincid.</span>
-        <strong className={bandClass(segment.match_confidence_band)}>{segment.match_confidence_score ?? '—'}</strong>
+        <span className="confidence-inline-label">Coincidencia</span>
+        <strong className={bandClass(segment.match_confidence_band)}>{segment.match_confidence_score ?? '—'}/100</strong>
         <span className="confidence-inline-divider">·</span>
         <span className="confidence-inline-label">Inicio</span>
-        <strong className={bandClass(segment.temporal_precision_band)}>{segment.temporal_precision_score ?? '—'}</strong>
+        <strong className={bandClass(segment.temporal_precision_band)}>{segment.temporal_precision_score ?? '—'}/100</strong>
       </div>
     );
   };
