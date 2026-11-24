@@ -39,7 +39,7 @@ def test_template_swap_cleans_old_previous_after_new_target_is_committed(tmp_pat
 
 
 
-def test_ensure_templates_selects_anime_themes_result_automatically_using_cli_style_matching(tmp_path, monkeypatch):
+def test_ensure_templates_synchronizes_all_cli_matches_automatically(tmp_path, monkeypatch):
     from backend.services import template_service
 
     template_root = tmp_path / "templates"
@@ -47,42 +47,47 @@ def test_ensure_templates_selects_anime_themes_result_automatically_using_cli_st
         "template_path": str(template_root),
         "plugins_path": str(tmp_path / "plugins"),
     })
-    seen_queries = []
-    selected = []
-    candidates = [
-        {"slug": "unrelated-anime", "title_romaji": "Unrelated Anime", "opening_count": 2, "ending_count": 1},
-        {"slug": "my-show-season-2", "title_romaji": "My Show Season 2", "opening_count": 3, "ending_count": 2},
+    payload_rows = [
+        {"slug": "my-show", "title": {"romaji": "My Show", "english": "My Show"}, "themes": []},
+        {"slug": "my-show-season-2", "title": {"romaji": "My Show Season 2", "english": "My Show 2"}, "themes": []},
+        {"slug": "unrelated-anime", "title": {"romaji": "Unrelated Anime", "english": "Unrelated"}, "themes": []},
     ]
+    seen_queries = []
+    downloaded = []
     monkeypatch.setattr(
         template_service,
-        "search_candidates",
-        lambda query: (seen_queries.append(query) or candidates),
+        "_post_graphql",
+        lambda query: (seen_queries.append(query) or {
+            "data": {"search": {"anime": {"data": payload_rows}}}
+        }),
     )
     monkeypatch.setattr(
         template_service,
-        "download_selected_templates",
-        lambda series_name, slug, progress=None: selected.append((series_name, slug)),
+        "_download_anime_rows_templates_impl",
+        lambda _name, rows, _progress=None: (
+            downloaded.extend(item["slug"] for item in rows)
+            or {"audio_preparation_error": None, "audio_preparation_warning": None}
+        ),
     )
 
     result = template_service.ensure_templates("My Show (2022) [1080p]")
 
     assert result == template_root / "My Show (2022) [1080p]"
     assert seen_queries == ["My Show"]
-    assert selected == [("My Show (2022) [1080p]", "my-show-season-2")]
+    assert downloaded == ["my-show", "my-show-season-2"]
 
 
-def test_automatic_template_selection_falls_back_to_first_result_with_op_ed():
-    from backend.services.template_service import _choose_automatic_candidate
+def test_cli_template_selection_falls_back_to_all_provider_results():
+    from backend.services.template_service import _select_cli_matches
 
     candidates = [
-        {"slug": "anime-without-themes", "opening_count": 0, "ending_count": 0},
-        {"slug": "provider-ranked-match", "opening_count": 1, "ending_count": 1},
+        {"slug": "provider-ranked-one", "title": {"romaji": "First Anime"}},
+        {"slug": "provider-ranked-two", "title": {"romaji": "Second Anime"}},
     ]
 
-    selected = _choose_automatic_candidate("Local Folder Name", candidates)
+    selected = _select_cli_matches("Unrelated Local Folder", "Unrelated Local Folder", candidates)
 
-    assert selected["slug"] == "provider-ranked-match"
-
+    assert selected == candidates
 
 
 def test_wav_validation_excludes_corrupt_files_before_analysis(tmp_path):
