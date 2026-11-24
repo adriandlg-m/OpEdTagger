@@ -66,18 +66,18 @@ def test_load_config_imports_original_cli_template_folder_on_fresh_install(tmp_p
 
     config = load_config()
 
-    assert Path(config["template_path"]) == root / "Templates"
+    assert Path(config["template_path"]) == root / "templates"
     assert (root / "templates" / "Show" / "video_files" / "OP1.webm").read_bytes() == b"legacy-video"
 
 
 def test_load_config_upgrades_layout_v1_templates_to_lowercase_without_losing_files(tmp_path, monkeypatch):
     app_data, root = _isolate_paths(monkeypatch, tmp_path)
-    legacy = root / "Templates" / "Show" / "video_files"
+    legacy = root / "templates" / "Show" / "video_files"
     legacy.mkdir(parents=True)
     (legacy / "OP1.webm").write_bytes(b"existing-template")
     app_data.mkdir(parents=True, exist_ok=True)
     (app_data / "config.json").write_text(json.dumps({
-        "template_path": str(root / "Templates"),
+        "template_path": str(root / "templates"),
         "plugins_path": str(root / "plugins"),
         "_storage_layout_version": 1,
     }), encoding="utf-8")
