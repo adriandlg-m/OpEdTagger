@@ -73,6 +73,13 @@ export const api = {
   injectChapters: (id, replaceExisting) => request(`/episodes/${id}/inject`, {
     method: 'POST', body: JSON.stringify({ confirm: true, replace_existing_chapters: replaceExisting }),
   }),
+  startBatchInjection: (seriesName, episodeIds, replaceExisting) => request(
+    `/jobs/series/${encodeURIComponent(seriesName)}/inject`,
+    { method: 'POST', body: JSON.stringify({
+      episode_ids: episodeIds,
+      replace_existing_chapters: Boolean(replaceExisting),
+    }) },
+  ),
   exportLogsUrl: () => `${API_BASE}/logs/export`,
 };
 
@@ -101,21 +108,26 @@ export function mapEpisode(episode) {
   else if (episode.analysis_status === 'STALE') status = 'Desactualizado';
   else if (episode.analysis_status === 'NO_MATCH') status = 'Sin coincidencias';
   else if (episode.analysis_status === 'COMPLETED') {
-    if (hasOutlier) status = 'Outlier';
-    else if (episode.review_status === 'PENDING') status = 'Revisión';
+    if (hasOutlier && episode.review_status === 'PENDING') status = 'Revisión necesaria';
+    else if (episode.review_status === 'PENDING') status = 'Revisión necesaria';
+    else if (episode.review_status === 'REVIEW_RECOMMENDED') status = 'Revisión recomendada';
     else if (episode.injection_status === 'SUCCEEDED') status = 'Listo';
+    else if (['AUTO_APPROVED', 'MANUALLY_REVIEWED', 'APPROVED'].includes(episode.review_status)) status = 'Preparado';
+    else if (hasOutlier) status = 'Outlier';
     else status = 'Analizado';
   }
   const segment = (value) => value ? `${formatTimestamp(value.start)}–${formatTimestamp(value.end)}` : '—';
-  const score = (value) => value && Number.isFinite(Number(value.score)) ? Number(value.score).toFixed(3) : '—';
+  const confidence = (value) => value && Number.isFinite(Number(value.confidence_score))
+    ? Number(value.confidence_score)
+    : null;
   return {
     ...episode,
     id: episode.id,
     displayId: episode.display_name || episode.file_name,
     opening: segment(episode.op),
     ending: segment(episode.ed),
-    openingScore: score(episode.op),
-    endingScore: score(episode.ed),
+    openingScore: confidence(episode.op),
+    endingScore: confidence(episode.ed),
     status,
   };
 }

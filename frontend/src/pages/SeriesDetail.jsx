@@ -7,7 +7,68 @@ import SeriesArtworkLightbox from '../components/SeriesArtworkLightbox.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 import { api, formatTimestamp } from '../api/client.js';
 
-function EpisodeRow({ episode, onApprove, onCorrect, onInject, onToast, showOutliers = true }) {
+const INJECTION_ELIGIBLE_STATES = new Set([
+  'AUTO_APPROVED', 'REVIEW_RECOMMENDED', 'MANUALLY_REVIEWED', 'APPROVED',
+]);
+
+function isInjectionEligible(episode) {
+  return Boolean(
+    episode?.id
+    && episode.analysis_status === 'COMPLETED'
+    && (episode.op || episode.ed)
+    && INJECTION_ELIGIBLE_STATES.has(episode.review_status)
+    && !['SUCCEEDED', 'IN_PROGRESS', 'RECOVERY_REQUIRED'].includes(episode.injection_status)
+  );
+}
+
+function confidenceLabel(band) {
+  return ({
+    HIGH: 'Alta',
+    MEDIUM: 'Media',
+    LOW: 'Baja',
+    UNASSESSED: 'Sin evaluar',
+  })[band] || 'Sin evaluar';
+}
+
+function ConfidenceDetail({ label, segment, original, anomaly }) {
+  if (!segment) return null;
+  const score = Number.isFinite(Number(segment.confidence_score))
+    ? Number(segment.confidence_score)
+    : null;
+  const band = segment.confidence_band || 'UNASSESSED';
+  const factors = segment.confidence_factors || {};
+  const reasons = Array.isArray(factors.reasons) ? factors.reasons : [];
+  const changed = original && (
+    Number(original.start) !== Number(segment.start)
+    || Number(original.end) !== Number(segment.end)
+  );
+  return (
+    <div className={`confidence-detail confidence-${String(band).toLowerCase()}`}>
+      <div className="confidence-detail-heading">
+        <strong>{label}</strong>
+        {score === null
+          ? <span>Confianza sin evaluar</span>
+          : <span className="confidence-detail-score">{score}/100 · {confidenceLabel(band)}</span>}
+        {segment.manual_verified && <span className="confidence-manual-tag">Verificado manualmente</span>}
+        {anomaly && <span className="confidence-anomaly-tag">Anomalía temporal</span>}
+      </div>
+      {score !== null && <div className="confidence-detail-track"><span style={{ width: `${score}%` }} /></div>}
+      <div className="confidence-factor-list">
+        {factors.similarity !== null && factors.similarity !== undefined && <span>Similitud {Number(factors.similarity).toFixed(3)}</span>}
+        {factors.peak_clarity !== null && factors.peak_clarity !== undefined && <span>Claridad {Number(factors.peak_clarity).toFixed(3)}</span>}
+        {factors.template_margin !== null && factors.template_margin !== undefined && <span>Separación de templates {Number(factors.template_margin).toFixed(3)}</span>}
+        {factors.temporal_consistency !== null && factors.temporal_consistency !== undefined && <span>Consistencia {Number(factors.temporal_consistency).toFixed(3)}</span>}
+      </div>
+      {reasons.length > 0 && <ul>{reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul>}
+      {changed && <p className="confidence-original-value">Detección original: {formatTimestamp(original.start)}–{formatTimestamp(original.end)}</p>}
+    </div>
+  );
+}
+
+function EpisodeRow({
+  episode, onApprove, onCorrect, onInject, onToast, showOutliers = true,
+  selected = false, onToggleSelection, processingFile = null,
+}) {
   const [expanded, setExpanded] = useState(false);
   const [opStart, setOpStart] = useState(episode.op?.start ?? '');
   const [opEnd, setOpEnd] = useState(episode.op?.end ?? '');
@@ -17,18 +78,22 @@ function EpisodeRow({ episode, onApprove, onCorrect, onInject, onToast, showOutl
     setOpStart(episode.op?.start ?? ''); setOpEnd(episode.op?.end ?? '');
     setEdStart(episode.ed?.start ?? ''); setEdEnd(episode.ed?.end ?? '');
   }, [episode.op?.start, episode.op?.end, episode.ed?.start, episode.ed?.end]);
+
   const isOutlier = showOutliers && episode.status === 'Outlier';
   const badgeStatus = !showOutliers && episode.status === 'Outlier'
-    ? (episode.review_status === 'PENDING' ? 'Revisión' : episode.injection_status === 'SUCCEEDED' ? 'Listo' : 'Analizado')
+    ? (episode.review_status === 'PENDING' ? 'Revisión necesaria' : episode.injection_status === 'SUCCEEDED' ? 'Listo' : 'Preparado')
     : episode.status;
   const needsReview = episode.review_status === 'PENDING';
-  const approved = episode.review_status === 'APPROVED';
+  const reviewRecommended = episode.review_status === 'REVIEW_RECOMMENDED';
   const injected = episode.injection_status === 'SUCCEEDED';
   const injectionInProgress = episode.injection_status === 'IN_PROGRESS';
   const recoveryRequired = episode.injection_status === 'RECOVERY_REQUIRED';
   const reviewLocked = injectionInProgress || recoveryRequired;
+  const canInject = isInjectionEligible(episode);
   const hasResult = ['COMPLETED', 'NO_MATCH'].includes(episode.analysis_status);
   const legacyResult = episode.analysis_status === 'STALE' || episode.legacy_result;
+  const isProcessing = processingFile && episode.file_name === processingFile;
+
   const saveCorrections = () => {
     const build = (start, end, existing, label) => {
       if (String(start).trim() === '' && String(end).trim() === '') return null;
@@ -46,12 +111,41 @@ function EpisodeRow({ episode, onApprove, onCorrect, onInject, onToast, showOutl
     } catch (error) { onToast(error.message, 'error'); }
   };
 
+  const confidenceText = (segment) => {
+    if (!segment) return 'Sin coincidencia';
+    if (!Number.isFinite(Number(segment.confidence_score))) return 'Confianza sin evaluar';
+    return `Confianza ${Number(segment.confidence_score)}/100 · ${confidenceLabel(segment.confidence_band)}`;
+  };
+  const bandClass = (segment) => `confidence-inline confidence-${String(segment?.confidence_band || 'unassessed').toLowerCase()}`;
+
   return (
-    <article className={`episode-row ${isOutlier ? 'episode-outlier' : ''}`}>
+    <article className={`episode-row ${isOutlier ? 'episode-outlier' : ''} ${isProcessing ? 'episode-row-processing' : ''}`}>
       <div className="episode-main-row">
-        <div className="episode-id-block"><strong>{episode.displayId || episode.file_name}</strong><span className="stage-label">{episode.file_name}</span></div>
-        <div className="episode-segment"><span className="segment-label">Opening</span><strong>{episode.opening}</strong><small className={episode.openingScore === '—' ? 'muted-score' : 'score-positive'}>{episode.openingScore === '—' ? 'Sin coincidencia' : `Score ${episode.openingScore}`}</small></div>
-        <div className="episode-segment"><span className="segment-label">Ending</span><strong>{episode.ending}</strong><small className={episode.endingScore === '—' ? 'muted-score' : 'score-positive'}>{episode.endingScore === '—' ? 'Sin coincidencia' : `Score ${episode.endingScore}`}</small></div>
+        <div className="episode-id-block">
+          <div className="episode-id-line">
+            <input
+              type="checkbox"
+              className="episode-select-checkbox"
+              checked={selected}
+              disabled={!canInject || reviewLocked}
+              onChange={() => onToggleSelection?.(episode)}
+              aria-label={`Seleccionar ${episode.file_name} para inyección masiva`}
+              title={canInject ? 'Seleccionar para inyección masiva' : 'Este episodio necesita revisión o no está disponible para inyección'}
+            />
+            <strong>{episode.displayId || episode.file_name}</strong>
+          </div>
+          <span className="stage-label">{episode.file_name}</span>
+        </div>
+        <div className="episode-segment">
+          <span className="segment-label">Opening</span>
+          <strong>{episode.opening}</strong>
+          <small className={bandClass(episode.op)}>{confidenceText(episode.op)}</small>
+        </div>
+        <div className="episode-segment">
+          <span className="segment-label">Ending</span>
+          <strong>{episode.ending}</strong>
+          <small className={bandClass(episode.ed)}>{confidenceText(episode.ed)}</small>
+        </div>
         <div className="episode-status"><StatusBadge status={badgeStatus} /></div>
         <div className="episode-row-actions"><button className="icon-button expand-button" onClick={() => setExpanded((value) => !value)} aria-label="Mostrar detalles"><ChevronDown size={17} /></button></div>
       </div>
@@ -59,15 +153,25 @@ function EpisodeRow({ episode, onApprove, onCorrect, onInject, onToast, showOutl
         <div className="outlier-detail">
           <div className="outlier-detail-icon"><CircleAlert size={17} /></div>
           <div className="outlier-detail-copy">
-            <strong>Estado del episodio</strong>
+            <strong>Estado y fiabilidad de las detecciones</strong>
             <p>Análisis: {episode.analysis_status} · Revisión: {episode.review_status} · Inyección: {episode.injection_status}</p>
+            <div className="confidence-evidence-grid">
+              <ConfidenceDetail label="Opening" segment={episode.op} original={episode.original_op} anomaly={showOutliers && episode.is_anomaly_op} />
+              <ConfidenceDetail label="Ending" segment={episode.ed} original={episode.original_ed} anomaly={showOutliers && episode.is_anomaly_ed} />
+            </div>
             <div className="outlier-meta">
-              {episode.op && <span>OP: <b>{formatTimestamp(episode.op.start)}–{formatTimestamp(episode.op.end)}</b></span>}
-              {episode.ed && <span>ED: <b>{formatTimestamp(episode.ed.start)}–{formatTimestamp(episode.ed.end)}</b></span>}
-              {showOutliers && episode.is_anomaly_op && <span><b>OP marcada como anomalía</b></span>}
-              {showOutliers && episode.is_anomaly_ed && <span><b>ED marcada como anomalía</b></span>}
               {episode.error && <span>Error: <b>{episode.error}</b></span>}
-              {legacyResult && <span>Estos timestamps provienen del JSON antiguo. Se conservan como referencia, pero debes repetir el análisis para validarlos antes de revisarlos o inyectarlos.</span>}
+              {legacyResult && <span>Estos timestamps provienen del JSON antiguo. Se conservan como referencia, pero debes repetir el análisis para evaluarlos antes de inyectarlos.</span>}
+              {episode.review_history?.length > 0 && (
+                <span>
+                  Historial: <b>{episode.review_history.length} cambios registrados</b>
+                  {episode.review_history.slice(0, 3).map((entry, index) => (
+                    <small key={index} className="review-history-entry">
+                      {entry.segment_type} · {entry.action === 'CORRECTED' ? 'corregido' : entry.action === 'REMOVED' ? 'retirado' : 'aprobado'} · {new Date(entry.created_at).toLocaleString()}
+                    </small>
+                  ))}
+                </span>
+              )}
             </div>
             {hasResult && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, marginTop: 14, maxWidth: 620 }}>
               {[{ label: 'Opening', start: opStart, end: opEnd, setStart: setOpStart, setEnd: setOpEnd },
@@ -82,14 +186,14 @@ function EpisodeRow({ episode, onApprove, onCorrect, onInject, onToast, showOutl
               ))}
             </div>}
             <div className="inline-actions" style={{ marginTop: 12, flexWrap: 'wrap' }}>
-              {hasResult && <button className="button button-secondary button-small" onClick={saveCorrections} disabled={reviewLocked}>Guardar timestamps</button>}
+              {hasResult && <button className="button button-secondary button-small" onClick={saveCorrections} disabled={reviewLocked}>Guardar correcciones</button>}
               {legacyResult && <span className="muted-score">Reanaliza el episodio para habilitar la revisión segura.</span>}
-              {needsReview && <button className="button button-primary button-small" onClick={() => onApprove(episode)}><CheckCircle2 size={13} /> Aprobar detecciones</button>}
-              {approved && !injected && !reviewLocked && <button className="button button-secondary button-small" onClick={() => onInject(episode)}><ShieldCheck size={13} /> Revisar e inyectar</button>}
+              {(needsReview || reviewRecommended) && <button className="button button-primary button-small" onClick={() => onApprove(episode)} disabled={reviewLocked}><CheckCircle2 size={13} /> Confirmar manualmente</button>}
+              {canInject && !injected && !reviewLocked && <button className="button button-secondary button-small" onClick={() => onInject(episode)}><ShieldCheck size={13} /> Inyectar este episodio</button>}
               {injectionInProgress && <span className="muted-score">Inyección en curso. No edites ni vuelvas a ejecutar esta operación.</span>}
               {injected && <span className="status-badge status-success"><FileCheck2 size={13} /> Capítulos verificados</span>}
               {recoveryRequired && <span className="muted-score">La aplicación se interrumpió durante una inyección. Inspecciona el MKV y su respaldo antes de continuar.</span>}
-              {!hasResult && <span className="muted-score">No hay resultados que aprobar.</span>}
+              {!hasResult && <span className="muted-score">No hay resultados que revisar.</span>}
             </div>
           </div>
           <span className="outlier-detail-label">Datos reales</span>
@@ -137,7 +241,7 @@ function countFolderEpisodes(folder) {
   return count;
 }
 
-function FolderNode({ folder, depth, onApprove, onCorrect, onInject, onToast, showOutliers, expandAll = false }) {
+function FolderNode({ folder, depth, onApprove, onCorrect, onInject, onToast, showOutliers, expandAll = false, selectedIds, onToggleSelection, processingFile }) {
   // Every real folder starts collapsed. Active search/status filters expand
   // the matching tree temporarily so filtered episodes remain discoverable.
   const [expanded, setExpanded] = useState(false);
@@ -173,14 +277,16 @@ function FolderNode({ folder, depth, onApprove, onCorrect, onInject, onToast, sh
             <div className="episode-list folder-episode-list">
               {folder.episodes.map((episode) => (
                 <EpisodeRow key={episode.file_path} episode={episode} onApprove={onApprove}
-                  onCorrect={onCorrect} onInject={onInject} onToast={onToast} showOutliers={showOutliers} />
+                  onCorrect={onCorrect} onInject={onInject} onToast={onToast} showOutliers={showOutliers}
+                  selected={selectedIds?.has(episode.id)} onToggleSelection={onToggleSelection} processingFile={processingFile} />
               ))}
             </div>
           )}
           {childFolders.map((child) => (
             <FolderNode key={child.path} folder={child} depth={depth + 1}
               onApprove={onApprove} onCorrect={onCorrect} onInject={onInject}
-              onToast={onToast} showOutliers={showOutliers} expandAll={expandAll} />
+              onToast={onToast} showOutliers={showOutliers} expandAll={expandAll}
+              selectedIds={selectedIds} onToggleSelection={onToggleSelection} processingFile={processingFile} />
           ))}
         </div>
       )}
@@ -198,6 +304,8 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [metadataError, setMetadataError] = useState('');
   const [bannerFailed, setBannerFailed] = useState(false);
+  const [selectedEpisodeIds, setSelectedEpisodeIds] = useState(() => new Set());
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
   useEffect(() => setPosterUrl(series.poster_url || ''), [series.poster_url]);
 
   const refreshSeriesMetadata = useCallback(async () => {
@@ -245,7 +353,10 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
       || String(ep.displayId || ep.file_name).toLowerCase().includes(query)
       || ep.file_name.toLowerCase().includes(query)
       || String(ep.folder_path || '').toLowerCase().includes(query);
-    const matchesStatus = statusFilter === 'Todos los estados' || ep.status === statusFilter;
+    const matchesStatus = statusFilter === 'Todos los estados'
+      || (statusFilter === 'Necesita revisión'
+        ? ['PENDING', 'REVIEW_RECOMMENDED'].includes(ep.review_status)
+        : ep.status === statusFilter);
     return matchesText && matchesStatus;
   }), [episodes, search, statusFilter]);
   const folderTree = useMemo(() => buildFolderTree(filtered), [filtered]);
@@ -253,7 +364,28 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
   const orderedFolders = useMemo(() => Array.from(folderTree.folders.values()).sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
   ), [folderTree]);
-  const active = activeJob && activeJob.kind === 'series' && activeJob.series_name === series.name && ['queued', 'running', 'cancellation_requested'].includes(activeJob.status);
+  const active = activeJob
+    && ['series', 'injection'].includes(activeJob.kind)
+    && activeJob.series_name === series.name
+    && ['queued', 'running', 'cancellation_requested'].includes(activeJob.status);
+  const isInjectionJob = activeJob?.kind === 'injection';
+  const eligibleEpisodes = episodes.filter(isInjectionEligible);
+  const selectedEligibleEpisodes = eligibleEpisodes.filter((episode) => selectedEpisodeIds.has(episode.id));
+  const confidenceCounts = useMemo(() => {
+    const counts = { HIGH: 0, MEDIUM: 0, LOW: 0, UNASSESSED: 0 };
+    for (const episode of episodes) {
+      for (const segment of [episode.op, episode.ed]) {
+        if (!segment) continue;
+        const band = counts[segment.confidence_band] === undefined ? 'UNASSESSED' : segment.confidence_band;
+        counts[band] += 1;
+      }
+    }
+    return counts;
+  }, [episodes]);
+  const reviewQueueCount = episodes.filter((episode) =>
+    ['PENDING', 'REVIEW_RECOMMENDED'].includes(episode.review_status)
+  ).length;
+  const processingFile = activeJob?.stage === 'analyzing_episodes' ? activeJob.current_item : null;
   const activeStageLabel = ({
     queued: 'En cola',
     initializing: 'Iniciando análisis',
@@ -264,10 +396,11 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     converting_templates: 'Convirtiendo vídeos a WAV',
     validating_templates: 'Validando plantillas de audio',
     analyzing_episodes: 'Analizando episodios',
+    injecting_chapters: 'Inyectando capítulos en MKV',
     cancellation_requested: 'Solicitando cancelación',
     cancelling: 'Cancelando análisis',
-    failed: 'Análisis fallido',
-    cancelled: 'Análisis cancelado',
+    failed: isInjectionJob ? 'Inyección fallida' : 'Análisis fallido',
+    cancelled: isInjectionJob ? 'Inyección cancelada' : 'Análisis cancelado',
   })[activeJob?.stage] || activeJob?.stage || 'Procesamiento';
 
   const openPosterSearch = () => setPosterModalOpen(true);
@@ -337,12 +470,49 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     } catch (error) { onToast(error.message, 'error'); }
   };
 
+  const toggleEpisodeSelection = (episode) => {
+    if (!isInjectionEligible(episode)) return;
+    setSelectedEpisodeIds((current) => {
+      const next = new Set(current);
+      if (next.has(episode.id)) next.delete(episode.id);
+      else next.add(episode.id);
+      return next;
+    });
+  };
+
+  const selectAllEligible = () => {
+    setSelectedEpisodeIds(new Set(eligibleEpisodes.map((episode) => episode.id)));
+  };
+
+  const startBatchInjection = async () => {
+    const ids = selectedEligibleEpisodes.map((episode) => episode.id);
+    if (!ids.length || batchSubmitting) return;
+    const replaceExisting = window.confirm(
+      '¿Deseas reemplazar los capítulos que ya existan en los MKV seleccionados?\n\nAceptar: reemplazar los existentes.\nCancelar: conservarlos y registrar esos archivos como omitidos/fallidos.'
+    );
+    const accepted = window.confirm(
+      `Se inyectarán capítulos en ${ids.length} episodios. Cada MKV tendrá una copia de seguridad y se verificará después de la escritura. ¿Continuar?`
+    );
+    if (!accepted) return;
+    setBatchSubmitting(true);
+    try {
+      const job = await api.startBatchInjection(series.name, ids, replaceExisting);
+      setSelectedEpisodeIds(new Set());
+      onToast(`Inyección masiva iniciada para ${ids.length} episodios. Trabajo ${job.id}.`, 'success');
+      await onRefresh?.();
+    } catch (error) {
+      onToast(error.message || 'No se pudo iniciar la inyección masiva.', 'error');
+    } finally {
+      setBatchSubmitting(false);
+    }
+  };
+
   return (
-    <div className="page-content detail-page">
+    <div className={`page-content detail-page ${active ? 'is-processing' : ''}`}>
       <div className="detail-fixed-content">
         <div className="breadcrumb"><button onClick={onBack}><ArrowLeft size={15} /> Dashboard</button><ChevronRight size={14} /><span>{series.title}</span></div>
         <PageHeader title="Detalle de serie" description="Al analizar, OpEdTagger sincroniza automáticamente los templates OP/ED, prepara y valida sus WAV y después procesa los episodios. Los MKV no se modifican."
-          eyebrow="BIBLIOTECA / SERIE" actions={active ? <button className="button button-danger-ghost" onClick={onCancelProcessing}><XCircle size={15} /> Cancelar análisis</button> : <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="button button-secondary" onClick={openPosterSearch}><ImagePlus size={15} /> {posterUrl ? 'Cambiar carátula' : 'Buscar carátula'}</button><button className="button button-primary" onClick={onStartProcessing}><Play size={15} fill="currentColor" /> Analizar serie</button></div>} />
+          eyebrow="BIBLIOTECA / SERIE" actions={active ? <button className="button button-danger-ghost" onClick={() => onCancelProcessing(activeJob?.id)}><XCircle size={15} /> {isInjectionJob ? 'Cancelar inyección' : 'Cancelar análisis'}</button> : <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="button button-secondary" onClick={openPosterSearch}><ImagePlus size={15} /> {posterUrl ? 'Cambiar carátula' : 'Buscar carátula'}</button><button className="button button-primary" onClick={onStartProcessing}><Play size={15} fill="currentColor" /> Analizar serie</button></div>} />
 
         {posterModalOpen && <PosterSearchModal
           seriesName={series.name || series.title}
@@ -351,7 +521,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
           onToast={onToast}
         />}
 
-        <section className={`panel series-hero-panel ${seriesMetadata?.banner_url && !bannerFailed ? 'series-hero-has-banner' : ''}`}>
+        <section className={`panel series-hero-panel ${active ? 'series-hero-processing' : ''} ${seriesMetadata?.banner_url && !bannerFailed ? 'series-hero-has-banner' : ''}`}>
           {seriesMetadata?.banner_url && !bannerFailed && (
             <img
               className="series-hero-banner"
@@ -450,8 +620,11 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
           const percentage = Math.round(activeJob.progress || 0);
           const indeterminate = ['searching_templates', 'loading_template_metadata'].includes(activeJob.stage)
             || (activeJob.stage === 'downloading_templates' && /tamaño desconocido/i.test(activeJob.current_item || ''));
+          const items = activeJob.items || [];
+          const completedItems = items.filter((item) => item.status === 'completed').length;
+          const failedItems = items.filter((item) => item.status === 'failed').length;
           return (
-            <section className="panel series-processing-progress" style={{ padding: 16, marginBottom: 16 }} aria-live="polite">
+            <section className={`panel series-processing-progress ${isInjectionJob ? 'series-processing-injection' : ''}`} aria-live="polite">
               <div className="progress-heading">
                 <span>{activeStageLabel}</span>
                 <strong>{indeterminate ? 'En curso' : `${percentage}%`}</strong>
@@ -466,22 +639,45 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
               >
                 <span style={indeterminate ? undefined : { width: `${Math.min(100, percentage)}%` }} />
               </div>
-              <p className="processing-current-item">{activeJob.current_item || 'Preparando…'}</p>
+              <div className="processing-progress-meta">
+                <p className="processing-current-item">{activeJob.current_item || 'Preparando…'}</p>
+                {isInjectionJob && <span>{completedItems} completados · {failedItems} con error · {activeJob.total_items || items.length} seleccionados</span>}
+              </div>
             </section>
           );
         })()}
         {!active && activeJob?.kind === 'series' && activeJob.series_name === series.name && activeJob.status === 'failed' && (
-          <section className="panel series-processing-error" role="alert" style={{ padding: 16, marginBottom: 16 }}>
+          <section className="panel series-processing-error" role="alert">
             <strong>No se pudo completar el análisis de la serie.</strong>
             <p>{activeJob.error || 'El trabajo terminó con un error sin descripción. Revisa los logs de OpEdTagger.'}</p>
           </section>
         )}
         {!active && activeJob?.kind === 'series' && activeJob.series_name === series.name && activeJob.status === 'cancelled' && (
-          <section className="panel series-processing-error" role="status" style={{ padding: 16, marginBottom: 16 }}>
+          <section className="panel series-processing-error" role="status">
             <strong>El análisis fue cancelado.</strong>
             <p>{activeJob.error || 'La cancelación fue solicitada.'}</p>
           </section>
         )}
+        {!active && activeJob?.kind === 'injection' && activeJob.series_name === series.name
+          && ['completed', 'completed_with_errors', 'failed', 'cancelled'].includes(activeJob.status) && (
+          <section className={`panel series-processing-result ${activeJob.status === 'completed' ? 'result-success' : 'result-warning'}`} role="status">
+            <strong>
+              {activeJob.status === 'completed' ? 'Inyección masiva completada'
+                : activeJob.status === 'cancelled' ? 'Inyección masiva cancelada'
+                  : activeJob.status === 'failed' ? 'No se pudo completar la inyección masiva'
+                    : 'Inyección masiva completada con incidencias'}
+            </strong>
+            <p>
+              {(activeJob.items || []).filter((item) => item.status === 'completed').length} episodios completados ·
+              {' '}{(activeJob.items || []).filter((item) => item.status === 'failed').length} con error ·
+              {' '}{(activeJob.items || []).filter((item) => item.status === 'cancelled').length} cancelados.
+            </p>
+            {(activeJob.items || []).filter((item) => item.status === 'failed').slice(0, 4).map((item) => (
+              <small key={item.id || item.item_key}>{item.file_name}: {item.error || item.result?.error || 'Error de inyección'}</small>
+            ))}
+          </section>
+        )}
+
       </div>
 
       <section className="panel episodes-panel">
@@ -491,6 +687,22 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
             <label className="select-control"><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>Todos los estados</option><option>Analizado</option><option>Revisión</option><option>Outlier</option><option>Sin coincidencias</option><option>Desactualizado</option><option>Pendiente</option><option>Error</option><option>Listo</option></select><ChevronDown size={15} /></label>
           </div>
         </div>
+        <div className="confidence-summary-bar">
+          <div className="confidence-summary-metrics">
+            <span className="confidence-count confidence-count-high"><strong>{confidenceCounts.HIGH}</strong> altas</span>
+            <span className="confidence-count confidence-count-medium"><strong>{confidenceCounts.MEDIUM}</strong> medias</span>
+            <span className="confidence-count confidence-count-low"><strong>{confidenceCounts.LOW + confidenceCounts.UNASSESSED}</strong> bajas / sin evaluar</span>
+            <span className="confidence-review-count">{reviewQueueCount} episodios para revisar</span>
+          </div>
+          <div className="confidence-batch-actions">
+            <button className="button button-ghost button-small" onClick={() => setStatusFilter('Necesita revisión')} disabled={!reviewQueueCount}>Ver excepciones</button>
+            <button className="button button-secondary button-small" onClick={selectAllEligible} disabled={!eligibleEpisodes.length}>Seleccionar elegibles ({eligibleEpisodes.length})</button>
+            <button className="button button-primary button-small" onClick={startBatchInjection} disabled={!selectedEligibleEpisodes.length || batchSubmitting}>
+              {batchSubmitting ? 'Preparando…' : `Inyectar seleccionados (${selectedEligibleEpisodes.length})`}
+            </button>
+            {selectedEpisodeIds.size > 0 && <button className="button button-ghost button-small" onClick={() => setSelectedEpisodeIds(new Set())}>Limpiar</button>}
+          </div>
+        </div>
         <div className="episode-column-head"><span>EPISODIO</span><span>OPENING</span><span>ENDING</span><span>ESTADO</span><span /></div>
         <div className="folder-tree-viewport" aria-label="Carpetas y episodios de la serie" tabIndex={0}>
           <div className="folder-tree">
@@ -498,17 +710,20 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
               <section className="folder-root-group">
                 <div className="folder-root-heading"><FolderOpen size={16} /><strong>Raíz de la serie</strong><span>{folderTree.episodes.length} {folderTree.episodes.length === 1 ? 'archivo' : 'archivos'}</span></div>
                 <div className="episode-list folder-episode-list">
-                  {folderTree.episodes.map((episode) => <EpisodeRow key={episode.file_path} episode={episode} onApprove={approve} onCorrect={correct} onInject={inject} onToast={onToast} showOutliers={showOutliers} />)}
+                  {folderTree.episodes.map((episode) => <EpisodeRow key={episode.file_path} episode={episode}
+                    onApprove={approve} onCorrect={correct} onInject={inject} onToast={onToast} showOutliers={showOutliers}
+                    selected={selectedEpisodeIds.has(episode.id)} onToggleSelection={toggleEpisodeSelection} processingFile={processingFile} />)}
                 </div>
               </section>
             )}
             {orderedFolders.map((folder) => <FolderNode key={folder.path} folder={folder} depth={0}
               onApprove={approve} onCorrect={correct} onInject={inject} onToast={onToast}
-              showOutliers={showOutliers} expandAll={expandAllFolders} />)}
+              showOutliers={showOutliers} expandAll={expandAllFolders}
+              selectedIds={selectedEpisodeIds} onToggleSelection={toggleEpisodeSelection} processingFile={processingFile} />)}
             {filtered.length === 0 && <div className="empty-state"><Search size={23} /><strong>No hay episodios para mostrar</strong><span>Modifica la búsqueda o el filtro.</span></div>}
           </div>
         </div>
-        <div className="table-footer"><span>{filtered.length} de {episodes.length} episodios</span><span>Los capítulos solo se escriben tras revisión y confirmación.</span></div>
+        <div className="table-footer"><span>{filtered.length} de {episodes.length} episodios · {eligibleEpisodes.length} listos para inyección</span><span>Los MKV solo se modifican mediante una operación de inyección confirmada.</span></div>
       </section>
     </div>
   );

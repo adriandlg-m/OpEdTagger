@@ -107,10 +107,10 @@ export default function App() {
     return data;
   }, []);
 
-  const selectedSeriesJob = jobs.find((job) => job.kind === 'series'
+  const selectedSeriesJob = jobs.find((job) => ['series', 'injection'].includes(job.kind)
     && job.series_name === selectedSeries?.name
     && ['queued', 'running', 'cancellation_requested'].includes(job.status));
-  const latestSelectedSeriesJob = jobs.find((job) => job.kind === 'series'
+  const latestSelectedSeriesJob = jobs.find((job) => ['series', 'injection'].includes(job.kind)
     && job.series_name === selectedSeries?.name);
 
   useEffect(() => {
@@ -203,10 +203,11 @@ export default function App() {
     }
   };
 
-  const cancelProcessing = async () => {
-    if (!activeJob?.id) return;
+  const cancelProcessing = async (requestedJobId = null) => {
+    const jobId = requestedJobId || activeJob?.id;
+    if (!jobId) return;
     try {
-      await api.cancelJob(activeJob.id);
+      await api.cancelJob(jobId);
       notify('Solicitud de cancelación enviada.', 'success');
     } catch (err) {
       notify(err.message, 'error');
