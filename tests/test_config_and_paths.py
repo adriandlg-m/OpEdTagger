@@ -23,7 +23,7 @@ def test_default_config_keeps_user_data_separate_and_uses_project_root_for_templ
     config = load_config()
 
     assert Path(config["database_path"]).parent == app_data
-    assert Path(config["template_path"]) == root / "Templates"
+    assert Path(config["template_path"]) == root / "templates"
     assert Path(config["plugins_path"]) == root / "plugins"
     assert (app_data / "config.json").exists()
 
@@ -48,7 +48,7 @@ def test_load_config_migrates_old_appdata_directories_without_deleting_the_sourc
 
     assert Path(config["template_path"]) == root / "Templates"
     assert Path(config["plugins_path"]) == root / "plugins"
-    assert (root / "Templates" / "Show" / "video_files" / "opening.webm").read_bytes() == b"template-video"
+    assert (root / "templates" / "Show" / "video_files" / "opening.webm").read_bytes() == b"template-video"
     assert (root / "plugins" / "FFMPEG" / "bin" / "ffmpeg.exe").read_bytes() == b"old-tool"
     # The original locations remain available until the user verifies the migration.
     assert (old_templates / "Show" / "video_files" / "opening.webm").exists()
@@ -68,6 +68,26 @@ def test_load_config_imports_original_cli_template_folder_on_fresh_install(tmp_p
 
     assert Path(config["template_path"]) == root / "Templates"
     assert (root / "Templates" / "Show" / "video_files" / "OP1.webm").read_bytes() == b"legacy-video"
+
+
+def test_load_config_upgrades_layout_v1_templates_to_lowercase_without_losing_files(tmp_path, monkeypatch):
+    app_data, root = _isolate_paths(monkeypatch, tmp_path)
+    legacy = root / "Templates" / "Show" / "video_files"
+    legacy.mkdir(parents=True)
+    (legacy / "OP1.webm").write_bytes(b"existing-template")
+    app_data.mkdir(parents=True, exist_ok=True)
+    (app_data / "config.json").write_text(json.dumps({
+        "template_path": str(root / "Templates"),
+        "plugins_path": str(root / "plugins"),
+        "_storage_layout_version": 1,
+    }), encoding="utf-8")
+
+    config = load_config()
+
+    assert Path(config["template_path"]) == root / "templates"
+    assert (root / "templates" / "Show" / "video_files" / "OP1.webm").read_bytes() == b"existing-template"
+    assert config["_storage_layout_version"] == 2
+    assert (root / "templates").is_dir()
 
 
 def test_save_config_validates_and_normalizes_paths(tmp_path, monkeypatch):
