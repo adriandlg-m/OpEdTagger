@@ -24,52 +24,148 @@ from core.analyzer import prepare_song_templates
 
 logger = logging.getLogger(__name__)
 _TEMPLATE_LOCK = threading.RLock()
-GRAPHQL_URL = "https://rs.animethemes.moe/graphql"
+GRAPHQL_URL = "https://graphql.animethemes.moe/"
 HEADERS = {
     "Content-Type": "application/json",
+    "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Origin": "https://animethemes.moe",
-    "Referer": "https://animethemes.moe/",
 }
 SEARCH_QUERY = """
-query ($searchTerm: String!) {
-  search(search: $searchTerm, first: 20, page: 1) {
-    anime { data { slug title { romaji english } themes { type sequence slug entries { videos { nodes { link resolution filename } } } } } }
+query ($q: String!, $first: Int!) {
+  search(search: $q, first: $first) {
+    anime { id slug year season title { romaji english native } }
+  }
+}
+"""
+THEMES_QUERY = """
+query ($slug: String!) {
+  anime(slug: $slug) {
+    id
+    slug
+    title { romaji english native }
+    animethemes {
+      id
+      slug
+      type
+      sequence
+      song { title { romaji native } }
+      animethemeentries {
+        episodes
+        videos { nodes { basename link resolution nc } }
+      }
+    }
   }
 }
 """
 
 
 def _request_options() -> dict:
+    # AnimeThemes is behind Cloudflare; keep the same browser impersonation used
+    # by the CLI, but target the current public GraphQL host.
     return {"impersonate": "chrome120"} if _CURL_CFFI_AVAILABLE else {}
 
 
-def _post_graphql(search_term: str, *, attempts: int = 3) -> dict:
+def _report_progress(
+    callback: Callable[[str, float, str], None] | None,
+    stage: str,
+    percentage: float,
+    item: str,
+) -> None:
+    if callback:
+        callback(stage, max(0.0, min(100.0, float(percentage))), item)
+
+
+def _graphql_request(
+    query: str,
+    variables: dict,
+    *,
+    attempts: int = 2,
+    progress: Callable[[str, float, str], None] | None = None,
+    stage: str = "searching_templates",
+    item: str = "AnimeThemes",
+) -> dict:
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
+        _report_progress(progress, stage, 1.0, f"{item} · consulta {attempt}/{attempts}")
         try:
             response = http.post(
                 GRAPHQL_URL,
-                json={"query": SEARCH_QUERY, "variables": {"searchTerm": search_term}},
+                json={"query": query, "variables": variables},
                 headers=HEADERS,
-                timeout=45,
+                timeout=(10, 20),
                 **_request_options(),
             )
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After", "")
+                try:
+                    delay = min(max(float(retry_after), 1.0), 5.0)
+                except (TypeError, ValueError):
+                    delay = min(float(attempt), 3.0)
+                raise RuntimeError(f"AnimeThemes limitó temporalmente la consulta (HTTP 429). Reintento en {delay:g}s.")
             response.raise_for_status()
             payload = response.json()
+            if not isinstance(payload, dict):
+                raise RuntimeError("AnimeThemes devolvió una respuesta GraphQL con formato inesperado.")
             if payload.get("errors"):
-                raise RuntimeError(
-                    "AnimeThemes returned GraphQL errors: "
-                    + "; ".join(error.get("message", "Unknown error") for error in payload["errors"])
+                details = "; ".join(
+                    str(error.get("message") or "Error GraphQL desconocido")
+                    for error in payload["errors"]
                 )
+                raise RuntimeError(f"AnimeThemes rechazó la consulta GraphQL: {details}")
+            data = payload.get("data")
+            if not isinstance(data, dict):
+                raise RuntimeError("AnimeThemes respondió sin el objeto 'data' de GraphQL.")
             return payload
         except Exception as exc:
             last_error = exc
-            logger.warning("AnimeThemes request attempt %s/%s failed: %s", attempt, attempts, exc)
+            logger.warning(
+                "AnimeThemes GraphQL attempt %s/%s failed (%s): %s",
+                attempt,
+                attempts,
+                item,
+                exc,
+            )
             if attempt < attempts:
-                time.sleep(min(2 ** attempt, 8))
-    raise RuntimeError(f"AnimeThemes could not be reached after {attempts} attempts: {last_error}") from last_error
+                time.sleep(min(float(attempt), 2.0))
+
+    raise RuntimeError(
+        f"No se pudo consultar AnimeThemes ({item}) después de {attempts} intentos: {last_error}"
+    ) from last_error
+
+
+def _post_graphql(
+    search_term: str,
+    *,
+    attempts: int = 2,
+    progress: Callable[[str, float, str], None] | None = None,
+) -> dict:
+    """Search AnimeThemes using the current GraphQL schema."""
+    return _graphql_request(
+        SEARCH_QUERY,
+        {"q": search_term, "first": 20},
+        attempts=attempts,
+        progress=progress,
+        stage="searching_templates",
+        item=f"Buscando «{search_term}» en AnimeThemes",
+    )
+
+
+def _fetch_anime_details(
+    slug: str,
+    *,
+    attempts: int = 2,
+    progress: Callable[[str, float, str], None] | None = None,
+    percentage: float = 3.0,
+) -> dict:
+    return _graphql_request(
+        THEMES_QUERY,
+        {"slug": slug},
+        attempts=attempts,
+        progress=progress,
+        stage="loading_template_metadata",
+        item=f"Obteniendo OP/ED de {slug}",
+    )
 
 
 def sanitize_query_from_folder(folder_name: str) -> str:
