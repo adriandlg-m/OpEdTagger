@@ -7,6 +7,7 @@ from pathlib import Path
 from backend.infrastructure.config import load_config, resolve_library_path, resolve_within
 from backend.infrastructure.database import db_session, utc_now
 from backend.services.analysis_service import assert_analysis_file_unchanged, preview_episode_chapters
+from backend.services.library_service import get_series_detail, scan_library
 from backend.services.log_service import log_event
 from backend.services.plugin_manager import ensure_chapter_plugins
 from core.fingerprints import file_fingerprint
