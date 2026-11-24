@@ -156,22 +156,37 @@ def _validate_wav_templates(wav_templates: list[Path], series_name: str) -> list
     return valid
 
 
-def _get_templates(series_name: str, selected_slug: str | None, progress: Callable | None = None) -> tuple[list[Path], str]:
+def _get_templates(
+    series_name: str,
+    selected_slug: str | None,
+    progress: Callable[[str, float, str], None] | None = None,
+) -> tuple[list[Path], str]:
     cfg = load_config()
     plugin_state = ensure_analysis_plugins(cfg)
     if plugin_state.get("status") not in {"ready", "analysis_ready"}:
         reason = plugin_state.get("last_error") or plugin_state.get("message") or "FFmpeg/FFprobe are unavailable."
         raise RuntimeError(f"Multimedia tools are not ready: {reason}")
 
+    if progress:
+        progress("searching_templates", 0.5, f"Preparando templates de {series_name}")
     template_dir = ensure_templates(series_name, selected_slug, progress)
+
+    def conversion_progress(index: int, total: int, name: str) -> None:
+        if progress:
+            percentage = 72.0 + ((index + 1) / max(total, 1)) * 18.0
+            progress("converting_templates", percentage, f"Verificando conversión WAV · {name}")
+
     wav_templates = prepare_song_templates(
         template_dir,
         Path(cfg["plugins_path"]).expanduser().resolve(),
-        on_template_progress=progress,
+        on_template_progress=conversion_progress,
     )
+    if progress:
+        progress("validating_templates", 94.0, "Validando archivos WAV")
     wav_templates = _validate_wav_templates(wav_templates, series_name)
+    if progress:
+        progress("validating_templates", 100.0, f"{len(wav_templates)} plantillas WAV válidas")
     return wav_templates, templates_signature(wav_templates)
-
 
 def _best(candidates: list[dict]) -> dict | None:
     return max(candidates, key=lambda item: item["score"]) if candidates else None
@@ -257,11 +272,10 @@ def analyze_series(series_name: str, job_id: str, cancel_event: threading.Event,
                        current_item=episode["file_name"])
         return {"status": "cancelled", "items": [], "errors": 0, "total": len(episodes)}
 
-    def template_cb(index: int, total: int, name: str) -> None:
+    def template_cb(stage: str, percentage: float, name: str) -> None:
         if cancel_event.is_set():
             raise InterruptedError("Analysis cancellation requested.")
-        update_job(stage="preparing_templates", current_item=name,
-                   progress=min(10.0, index / max(total, 1) * 10))
+        update_job(stage=stage, current_item=name, progress=percentage)
 
     try:
         wavs, signature = _get_templates(series_name, selected_slug, template_cb)
