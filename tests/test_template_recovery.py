@@ -90,6 +90,71 @@ def test_cli_template_selection_falls_back_to_all_provider_results():
     assert selected == candidates
 
 
+
+def test_legacy_cli_video_templates_are_synchronized_when_manifest_is_missing(tmp_path, monkeypatch):
+    from backend.services import template_service
+
+    template_root = tmp_path / "templates"
+    legacy_video = template_root / "Legacy Show" / "video_files" / "Legacy OP1.webm"
+    legacy_video.parent.mkdir(parents=True)
+    legacy_video.write_bytes(b"old-cli-video")
+    monkeypatch.setattr(template_service, "load_config", lambda: {
+        "template_path": str(template_root),
+        "plugins_path": str(tmp_path / "plugins"),
+    })
+    anime_row = {
+        "slug": "legacy-show",
+        "title": {"romaji": "Legacy Show", "english": "Legacy Show"},
+        "themes": [],
+    }
+    seen = []
+    monkeypatch.setattr(
+        template_service,
+        "_post_graphql",
+        lambda _query: {"data": {"search": {"anime": {"data": [anime_row]}}}},
+    )
+    monkeypatch.setattr(
+        template_service,
+        "_download_anime_rows_templates_impl",
+        lambda _name, rows, _progress=None: (
+            seen.extend(row["slug"] for row in rows)
+            or {"audio_preparation_error": None, "audio_preparation_warning": None}
+        ),
+    )
+
+    result = template_service.ensure_templates("Legacy Show")
+
+    assert result == template_root / "Legacy Show"
+    assert seen == ["legacy-show"]
+
+
+def test_valid_manual_wav_templates_do_not_force_anime_themes_download(tmp_path, monkeypatch):
+    from backend.services import template_service
+
+    template_root = tmp_path / "templates"
+    songs = template_root / "Manual Show" / "songs_files"
+    songs.mkdir(parents=True)
+    wav_path = songs / "manual.wav"
+    with wave.open(str(wav_path), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(22050)
+        audio.writeframes(b"\\x00\\x00" * 220)
+    monkeypatch.setattr(template_service, "load_config", lambda: {
+        "template_path": str(template_root),
+        "plugins_path": str(tmp_path / "plugins"),
+    })
+    monkeypatch.setattr(
+        template_service,
+        "_post_graphql",
+        lambda _query: pytest.fail("A valid manual WAV library should be preserved."),
+    )
+
+    result = template_service.ensure_templates("Manual Show")
+
+    assert result == template_root / "Manual Show"
+
+
 def test_wav_validation_excludes_corrupt_files_before_analysis(tmp_path):
     from backend.services.analysis_service import _validate_wav_templates
 
