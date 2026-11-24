@@ -8,7 +8,7 @@
 | Comprobación | Resultado |
 |---|---|
 | `python -m compileall -q backend core scripts` | Correcto |
-| `PYTHONPATH=. pytest -q` | 83 pruebas aprobadas en GitHub Actions (Python 3.12, Ubuntu) |
+| `PYTHONPATH=. pytest -q` | 87 pruebas aprobadas en GitHub Actions (Python 3.12, Ubuntu) |
 | TypeScript Compiler API parser sobre JS/JSX/TS del frontend | 17 archivos analizados sin errores de sintaxis |
 | Jerarquía recursiva de carpetas de usuario | Verificada con carpetas multinivel y archivos en raíz |
 | Toast fijo y Dashboard con scroll interno | Revisados estáticamente; prueba visual pendiente en Windows |
@@ -52,12 +52,14 @@ La rama `feature/recover-cli-workflows` incorpora nuevas pruebas para:
 - La migración no destructiva desde las carpetas anteriores de AppData y desde el directorio `template/` del CLI.
 - La sincronización automática de todos los resultados AnimeThemes que coinciden como en el CLI (y fallback a todos los resultados cuando no hay coincidencia), caché de vídeos por URL y conservación de WAV manuales/manifiestos.
 - La validación de WAV legibles antes de iniciar el detector y el orden de preparación: dependencias, sincronización, conversión WAV y análisis.
+- El endpoint y esquema GraphQL actuales de AnimeThemes, variables de búsqueda/detalle, mapeo de `animethemes`/`animethemeentries` y manejo de cancelación.
+- El reporte de progreso por Opening/Ending y bytes transferidos, barra indeterminada durante consultas/tamaños desconocidos y progreso monotónico entre preparación y análisis.
 - La descarga de FFmpeg/FFprobe en segundo plano y la instalación diferida de MKVToolNix al inyectar capítulos.
 - La protección del contrato del motor OP/ED (`0.68`, 22.050 Hz, chroma, correlación y filtro ED del 70 %).
 - La extracción segura de ZIP y la recuperación de carpetas de plugins tras una interrupción.
 - Los nombres de capítulos históricos y el idioma `spa/es`, manteniendo backup, verificación y rollback.
 
-**Estado de esta rama:** en el commit `9382087` el workflow de GitHub Actions completó correctamente `compileall`, `pytest` (**83 pruebas**, 1 warning), `npm test` y `npm run build`. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales y la inyección sobre archivos MKV deben validarse además en Windows; no se simulan como pruebas de producción.
+**Estado de esta rama:** en el commit `0bf1a2a` el workflow de GitHub Actions completó correctamente `compileall`, `pytest` (**87 pruebas**, 1 warning), `npm test` y `npm run build`. La instalación real de herramientas, las consultas/descargas externas de AnimeThemes, la conversión con FFmpeg sobre vídeos reales y la inyección sobre archivos MKV deben validarse además en Windows; no se simulan como pruebas de producción.
 
 
 ## Comprobaciones pendientes
