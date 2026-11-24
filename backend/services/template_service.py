@@ -7,6 +7,7 @@ import shutil
 import threading
 import time
 import uuid
+import wave
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -93,6 +94,22 @@ def _select_cli_matches(series_name: str, query_term: str, anime_rows: list[dict
         )
     ]
     return matched or anime_rows
+
+
+def _valid_wav_files(directory: Path) -> list[Path]:
+    valid = []
+    if not directory.is_dir():
+        return valid
+    for path in sorted(directory.glob("*.wav"), key=lambda item: item.name.lower()):
+        try:
+            if path.stat().st_size <= 44:
+                continue
+            with wave.open(str(path), "rb") as audio:
+                if audio.getnframes() > 0 and audio.getframerate() > 0 and audio.getnchannels() > 0:
+                    valid.append(path)
+        except (OSError, EOFError, wave.Error):
+            continue
+    return valid
 
 
 def _safe_series_template_dir(series_name: str) -> Path:
@@ -433,19 +450,20 @@ def _ensure_templates_impl(
         if item.is_file() and item.suffix.lower() in {".mkv", ".mp4", ".ts", ".avi", ".mov", ".webm"}
         and item.stat().st_size > 0
     ] if video_dir.exists() else []
-    wav_files = [
-        item for item in wav_dir.glob("*.wav")
-        if item.is_file() and item.stat().st_size > 44
-    ] if wav_dir.exists() else []
+    wav_files = _valid_wav_files(wav_dir)
     has_templates = bool(video_files or wav_files)
 
     if selected_slug:
         download_selected_templates(series_name, selected_slug, progress)
         return series_dir
 
-    # Preserve user-managed local templates. AnimeThemes-managed templates,
-    # however, are synchronized on every Analyze action like the original CLI.
-    if has_templates and manifest_provider != "AnimeThemes":
+    # Preserve explicitly user-managed WAV-only templates. Legacy CLI folders
+    # contain videos but no provider manifest, so they still need the automatic
+    # AnimeThemes sync when Analyze is pressed.
+    user_managed_wavs_only = bool(wav_files) and not video_files and manifest_provider != "AnimeThemes"
+    if user_managed_wavs_only:
+        return series_dir
+    if manifest_provider not in {None, "AnimeThemes"} and has_templates:
         return series_dir
 
     query = sanitize_query_from_folder(series_name)
