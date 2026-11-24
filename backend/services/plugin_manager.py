@@ -293,7 +293,27 @@ def _inspect_local_tools(plugins_root: Path) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _recover_plugin_directory(plugins_root: Path, name: str) -> None:
+    target = plugins_root / name
+    previous_dirs = sorted(
+        plugins_root.glob(f".{name}.previous-*"),
+        key=lambda item: item.stat().st_mtime if item.exists() else 0,
+        reverse=True,
+    )
+    if not target.exists() and previous_dirs:
+        previous_dirs[0].replace(target)
+        previous_dirs = previous_dirs[1:]
+    if target.exists():
+        for previous in previous_dirs:
+            shutil.rmtree(previous, ignore_errors=True)
+
+
 def _clean_stale_staging(plugins_root: Path) -> None:
+    # Recover a prior install if the process stopped between renaming the old
+    # folder and activating the staged replacement.
+    _recover_plugin_directory(plugins_root, "FFMPEG")
+    _recover_plugin_directory(plugins_root, "MKVToolNix")
+
     staging_root = plugins_root / ".staging"
     if not staging_root.is_dir():
         return

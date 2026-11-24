@@ -281,6 +281,7 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
     try {
       const result = await api.downloadTemplates(series.name, candidate.slug);
       setTemplatePanel(false);
+      await onRefresh?.();
       onToast(`Templates descargados: ${result.downloaded} archivo(s) para ${candidate.title_english || candidate.title_romaji || candidate.slug}.`, 'success');
     } catch (error) {
       setTemplateError(error.message || 'No se pudieron descargar los templates.');
