@@ -95,6 +95,24 @@ def test_only_one_active_series_job_is_allowed(tmp_path):
             ("job-two", "series", "Example Show", "queued", "queued", "2026-01-01T00:00:02+00:00"),
         )
         assert conn.execute("SELECT COUNT(*) FROM jobs WHERE series_name='Example Show'").fetchone()[0] == 2
+    with pytest.raises(sqlite3.IntegrityError):
+        with db_session() as conn:
+            conn.execute(
+                "INSERT INTO jobs(id,kind,series_name,status,stage,created_at) VALUES(?,?,?,?,?,?)",
+                ("injection-conflict", "injection", "example show", "queued", "queued", "2026-01-01T00:00:03+00:00"),
+            )
+    with db_session() as conn:
+        conn.execute("UPDATE jobs SET status='completed' WHERE id='job-two'")
+        conn.execute(
+            "INSERT INTO jobs(id,kind,series_name,status,stage,created_at) VALUES(?,?,?,?,?,?)",
+            ("injection-one", "injection", "Example Show", "queued", "queued", "2026-01-01T00:00:04+00:00"),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        with db_session() as conn:
+            conn.execute(
+                "INSERT INTO jobs(id,kind,series_name,status,stage,created_at) VALUES(?,?,?,?,?,?)",
+                ("analysis-conflict", "series", "Example Show", "running", "running", "2026-01-01T00:00:05+00:00"),
+            )
 
 
 def test_interrupted_jobs_are_not_automatically_resumed(tmp_path):
