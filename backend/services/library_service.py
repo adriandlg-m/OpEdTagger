@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -160,8 +161,8 @@ def get_series_detail(series_name: str) -> dict:
             stat = file_path.stat()
             row = conn.execute(
                 "SELECT e.*, ar.analysis_status,ar.review_status,ar.injection_status,ar.op_json,ar.ed_json,"
-                "ar.is_anomaly_op,ar.is_anomaly_ed,ar.error,ar.analyzed_file_size,ar.analyzed_file_mtime,"
-                "ar.analyzer_version,ar.content_fingerprint,ar.source "
+                "ar.op_original_json,ar.ed_original_json,ar.is_anomaly_op,ar.is_anomaly_ed,ar.error,"
+                "ar.analyzed_file_size,ar.analyzed_file_mtime,ar.analyzer_version,ar.content_fingerprint,ar.source "
                 "FROM episodes e LEFT JOIN analysis_results ar ON ar.episode_id=e.id WHERE e.file_path=?",
                 (str(file_path.resolve()),),
             ).fetchone()
@@ -204,7 +205,28 @@ def get_series_detail(series_name: str) -> dict:
                 "is_anomaly_op": bool(row["is_anomaly_op"]) if current_result else False,
                 "is_anomaly_ed": bool(row["is_anomaly_ed"]) if current_result else False,
                 "error": row["error"] if row and (current_result or legacy_result or failed_result) else None,
+                "original_op": _segment(row, "op_original_json") if current_result else None,
+                "original_ed": _segment(row, "ed_original_json") if current_result else None,
+                "review_history": [],
             })
+        history_rows = conn.execute(
+            "SELECT h.episode_id,h.segment_type,h.action,h.before_json,h.after_json,h.created_at "
+            "FROM analysis_segment_history h JOIN episodes e ON e.id=h.episode_id "
+            "WHERE e.series_name=? ORDER BY h.id DESC",
+            (series_name,),
+        ).fetchall()
+        history_by_episode: dict[int, list[dict]] = {}
+        for history in history_rows:
+            history_by_episode.setdefault(int(history["episode_id"]), []).append({
+                "segment_type": history["segment_type"],
+                "action": history["action"],
+                "before": json.loads(history["before_json"]) if history["before_json"] else None,
+                "after": json.loads(history["after_json"]) if history["after_json"] else None,
+                "created_at": history["created_at"],
+            })
+        for episode in episodes:
+            if episode["id"] is not None:
+                episode["review_history"] = history_by_episode.get(int(episode["id"]), [])
         metadata = conn.execute(
             "SELECT provider,external_id,selected_title,poster_file,updated_at "
             "FROM series_artwork WHERE series_name=?",
