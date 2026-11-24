@@ -38,16 +38,16 @@ tests/                  Pruebas automatizadas
 - **Trabajos:** cola local persistida con un worker. Los trabajos activos se marcan como interrumpidos al iniciar después de un cierre inesperado; no se repiten solos.
 - **Progreso:** polling REST desde la interfaz.
 - **Motor:** conserva el algoritmo chroma del original (`COSINE_SIMILARITY_THRESHOLD = 0.68`). El detector OP/ED se trata como componente protegido: la preparación de herramientas, las plantillas, la interfaz y la inyección no deben cambiar su lógica ni sus parámetros. Una prueba de contrato verifica sus constantes y pasos críticos. El valor `score` se presenta como score bruto, nunca como porcentaje ni probabilidad. Los WAV derivados tienen un manifiesto de fingerprints: se regeneran cuando cambia el video fuente y se eliminan si el video fuente desaparece.
-- **Templates:** consulta AnimeThemes; si no hay coincidencia exacta única exige seleccionar el anime. En Detalle de serie se puede buscar y vincular manualmente la entrada correcta; las descargas seleccionadas se preparan en un directorio staging antes de reemplazar la caché anterior. La descarga mantiene `songs_files` y sus WAV manuales; el siguiente análisis regenera solo las conversiones derivadas cuyo vídeo fuente haya cambiado.
+- **Templates:** al analizar una serie, el servicio consulta AnimeThemes y selecciona automáticamente la entrada más adecuada siguiendo el criterio del CLI (coincidencia exacta, coincidencia parcial y fallback al primer resultado con OP/ED). Descarga en `video_files`, genera y valida WAV en `songs_files` y solo entonces inicia la detección. No requiere seleccionar un resultado manualmente. Se conservan WAV manuales y el manifiesto permite regenerar solo las conversiones derivadas cuyo vídeo fuente haya cambiado.
 
 ## Requisitos
 
 - Windows 10/11 (objetivo prioritario).
 - Python 3.11 o superior.
 - Node.js 20 o superior y npm, necesarios para instalar/build del frontend desde el código fuente.
-- En Windows x64, FFmpeg/FFprobe y MKVToolNix se preparan automáticamente en `plugins/` durante el primer arranque. En otros sistemas, deben estar instalados en `plugins_path` o en `PATH`.
+- En Windows x64, FFmpeg/FFprobe se preparan automáticamente en segundo plano al iniciar, sin bloquear la interfaz. MKVToolNix se instala en segundo plano cuando se solicita por primera vez una inyección de capítulos. En otros sistemas, las herramientas deben estar instaladas en `plugins_path` o en `PATH`.
 
-En Windows x64, el backend prepara automáticamente FFmpeg/FFprobe y MKVToolNix al iniciar cuando faltan en `plugins_path`. Las descargas se verifican mediante SHA-256, se extraen en un directorio temporal con validación de rutas y solo se activan después de superar una comprobación de versión. Si la instalación falla, el backend sigue disponible para las funciones que no dependan de esas herramientas y comunica el error en Settings. En otras plataformas se requiere que estén instaladas en `plugins_path` o en `PATH`.
+En Windows x64, FFmpeg/FFprobe se descargan y verifican en segundo plano durante el arranque; MKVToolNix se descarga solo al solicitar una inyección. Las descargas se verifican mediante SHA-256, se extraen en un directorio temporal con validación de rutas y solo se activan después de superar una comprobación de versión. El primer análisis espera a que FFmpeg/FFprobe estén listos. Si la instalación falla, el backend sigue disponible para las funciones que no dependan de esas herramientas y comunica el error en Settings. En otras plataformas se requiere que estén instaladas en `plugins_path` o en `PATH`.
 - Conexión a Internet para consultar AnimeThemes y descargar templates.
 
 La detección puede ejecutarse con FFmpeg y templates ya disponibles. La escritura de capítulos necesita además MKVToolNix.
@@ -81,7 +81,7 @@ La aplicación separa los datos de ejecución de los recursos de trabajo. Config
 - macOS: `~/Library/Application Support/OpEdTagger`
 - Linux: `$XDG_DATA_HOME/OpEdTagger` o `~/.local/share/OpEdTagger`
 
-Las carpetas `Templates/` y `plugins/` se encuentran en la raíz del proyecto. Cada serie utiliza `Templates/<serie>/video_files` para los vídeos OP/ED y `Templates/<serie>/songs_files` para los WAV derivados. Las herramientas multimedia se instalan en `plugins/`. Estas carpetas están excluidas de Git.
+Las carpetas `templates/` y `plugins/` se encuentran en la raíz del proyecto. Cada serie utiliza `templates/<serie>/video_files` para los vídeos OP/ED y `templates/<serie>/songs_files` para los WAV derivados. Las herramientas multimedia se instalan en `plugins/`. Estas carpetas están excluidas de Git.
 
 Se pueden sobrescribir las ubicaciones mediante `OPEDTAGGER_DATA_DIR` y `OPEDTAGGER_CONFIG_PATH`. Al detectar las rutas predeterminadas de versiones anteriores, OpEdTagger copia los archivos existentes a las nuevas ubicaciones sin sobrescribir archivos de destino ni borrar las carpetas de origen. La migración se marca como completada para no recorrer repetidamente bibliotecas grandes.
 
@@ -109,7 +109,7 @@ La pantalla permite seleccionar un MKV, consultar AnimeThemes y elegir un result
 
 ### Selección de templates
 
-Para el procesamiento por serie se reutiliza la carpeta de templates existente. Si está vacía, el servicio intenta una coincidencia exacta única con AnimeThemes. Si hay ambigüedad, el trabajo informa del problema en vez de descargar resultados potencialmente incorrectos. La API también expone búsqueda y descarga mediante `/api/templates/search` y `/api/templates/download`.
+Para el procesamiento por serie se reutiliza la carpeta de templates existente. Si está vacía, el job limpia el nombre local (año y etiquetas entre corchetes), busca AnimeThemes y escoge automáticamente una coincidencia exacta o parcial; si no hay coincidencia textual, conserva el fallback del CLI al primer resultado que tenga OP/ED. Después descarga los vídeos, convierte las pistas a WAV y comprueba que los archivos sean WAV legibles con audio antes de entregarlos al detector. La API conserva los endpoints de búsqueda y descarga para integraciones externas.
 
 ## Migración desde `anime_master.json`
 
