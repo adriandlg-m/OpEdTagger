@@ -13,6 +13,8 @@ const config = {
   'Completada y verificada': { tone: 'success', icon: Check },
   'Recuperación necesaria': { tone: 'danger', icon: CircleX },
   Fallida: { tone: 'danger', icon: CircleX },
+  'Espacio suficiente': { tone: 'success', icon: Check },
+  'Espacio insuficiente': { tone: 'danger', icon: CircleX },
   Conectado: { tone: 'success', icon: Check },
   Configurado: { tone: 'success', icon: Check },
   Outliers: { tone: 'warning', icon: AlertTriangle },

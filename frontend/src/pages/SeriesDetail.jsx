@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, ListChecks, Play, Search, ShieldCheck, XCircle, Eye, FileCheck2, Folder, FolderOpen, ImagePlus, Trash2, ZoomIn, ExternalLink } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Info, ListChecks, Play, Search, ShieldCheck, XCircle, Eye, FileCheck2, Folder, FolderOpen, ImagePlus, Trash2, ZoomIn, ExternalLink } from 'lucide-react';
 import PageHeader from '../components/PageHeader.jsx';
 import Poster from '../components/Poster.jsx';
 import PosterSearchModal from '../components/PosterSearchModal.jsx';
@@ -77,7 +77,7 @@ function ConfidenceSummaryGroup({ label, counts }) {
 function formatStorageBytes(value) {
   const bytes = Number(value || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'GB', 'TB'];
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const amount = bytes / (1024 ** index);
   return `${amount.toLocaleString('es-ES', { maximumFractionDigits: 1 })} ${units[index]}`;
@@ -1329,8 +1329,8 @@ export default function SeriesDetail({ series, episodes, onBack, onStartProcessi
                 </div>
                 {selectedEligibleEpisodes.length > 0 && (
                   <button className="button button-primary button-small" onClick={startBatchInjection}
-                    disabled={batchSubmitting || active}>
-                    {batchSubmitting ? 'Preparando…' : `Inyectar seleccionados (${selectedEligibleEpisodes.length})`}
+                    disabled={batchSubmitting || batchPreflightLoading || active}>
+                    {batchPreflightLoading ? 'Comprobando espacio…' : batchSubmitting ? 'Preparando…' : `Inyectar seleccionados (${selectedEligibleEpisodes.length})`}
                   </button>
                 )}
               </div>

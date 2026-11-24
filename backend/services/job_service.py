@@ -65,9 +65,17 @@ class JobService:
                     ).fetchone()
                 return status_row["injection_status"] if status_row else None
 
+            def set_episode_injection_status(episode_id: int, status: str, error: str | None):
+                with db_session() as conn:
+                    conn.execute(
+                        "UPDATE analysis_results SET injection_status=?,error=?,updated_at=? WHERE episode_id=?",
+                        (status, error, utc_now(), episode_id),
+                    )
+
             recovery_result = reconcile_backup_transactions(
                 Path(load_config()["backup_path"]),
                 get_episode_injection_status,
+                set_episode_injection_status,
             )
             if any(recovery_result.values()):
                 log_event("WARNING", "BackupManager", "Interrupted MKV backup transactions reconciled.", detail=str(recovery_result))

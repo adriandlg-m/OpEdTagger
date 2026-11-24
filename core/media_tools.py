@@ -192,18 +192,16 @@ def _restore_from_transaction(
     if expected_fingerprint and file_fingerprint(backup) != expected_fingerprint:
         raise RuntimeError("The temporary original MKV backup failed its integrity check.")
 
-    restore_tmp = mkv_path.with_name(mkv_path.name + f".{uuid.uuid4().hex[:8]}.restore")
-    try:
-        shutil.copy2(backup, restore_tmp)
-        if restore_tmp.stat().st_size != backup.stat().st_size:
-            raise RuntimeError("The restored temporary copy has an unexpected size.")
-        if expected_fingerprint and file_fingerprint(restore_tmp) != expected_fingerprint:
-            raise RuntimeError("The restored temporary copy failed its integrity check.")
-        restore_tmp.replace(mkv_path)
-        if expected_fingerprint and file_fingerprint(mkv_path) != expected_fingerprint:
-            raise RuntimeError("The restored MKV did not match the original fingerprint.")
-    finally:
-        restore_tmp.unlink(missing_ok=True)
+    # Copy directly over the target. This avoids requiring a second full-size
+    # restore file on the media volume. The untouched backup remains in the
+    # recovery transaction until the restored target has passed verification.
+    shutil.copy2(backup, mkv_path)
+    if mkv_path.stat().st_size != backup.stat().st_size:
+        raise RuntimeError("The restored MKV has an unexpected size.")
+    if expected_fingerprint and file_fingerprint(mkv_path) != expected_fingerprint:
+        raise RuntimeError("The restored MKV did not match the original fingerprint.")
+
+
 
 
 def inject_chapters_with_backup(
@@ -393,7 +391,11 @@ def rollback_injection_transaction(transaction: dict[str, Any], backup_root: Pat
     shutil.rmtree(transaction_dir, ignore_errors=True)
 
 
-def reconcile_backup_transactions(backup_root: Path, get_episode_injection_status) -> dict[str, int]:
+def reconcile_backup_transactions(
+    backup_root: Path,
+    get_episode_injection_status,
+    set_episode_injection_status=None,
+) -> dict[str, int]:
     """Resolve temporary transaction folders after an unclean application exit."""
     from core.backup_manager import ensure_backup_layout, move_transaction_to_recovery
 
@@ -405,8 +407,15 @@ def reconcile_backup_transactions(backup_root: Path, get_episode_injection_statu
         try:
             manifest = json.loads((transaction_dir / "manifest.json").read_text(encoding="utf-8"))
             phase = manifest.get("phase")
+            episode_id = manifest.get("episode_id")
             if phase in {"PREPARING", "BACKUP_READY"}:
                 shutil.rmtree(transaction_dir)
+                if episode_id is not None and set_episode_injection_status is not None:
+                    set_episode_injection_status(
+                        int(episode_id),
+                        "NOT_REQUESTED",
+                        None,
+                    )
                 summary["removed_incomplete"] += 1
                 continue
             episode_id = manifest.get("episode_id")
@@ -415,11 +424,29 @@ def reconcile_backup_transactions(backup_root: Path, get_episode_injection_statu
                 finalize_injection_transaction({"transaction_path": str(transaction_dir)})
                 summary["finalized"] += 1
             else:
-                move_transaction_to_recovery(
-                    transaction_dir, backup_root,
-                    reason="The application stopped during chapter injection. Inspect the backup and target MKV before retrying.",
+                reason = (
+                    "The application stopped during chapter injection. "
+                    "Inspect the backup and target MKV before retrying."
                 )
+                recovery_dir = move_transaction_to_recovery(
+                    transaction_dir, backup_root, reason=reason,
+                )
+                if episode_id is not None and set_episode_injection_status is not None:
+                    set_episode_injection_status(
+                        int(episode_id),
+                        "RECOVERY_REQUIRED",
+                        f"{reason} Backup: {recovery_dir / 'original.mkv'}",
+                    )
                 summary["moved_to_recovery"] += 1
-        except Exception:
+        except Exception as exc:
+            if 'episode_id' in locals() and episode_id is not None and set_episode_injection_status is not None:
+                try:
+                    set_episode_injection_status(
+                        int(episode_id),
+                        "RECOVERY_REQUIRED",
+                        f"Could not reconcile the MKV backup transaction: {exc}",
+                    )
+                except Exception:
+                    pass
             summary["errors"] += 1
     return summary
