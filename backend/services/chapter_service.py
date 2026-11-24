@@ -80,7 +80,7 @@ def preview_batch_injection(
     return estimate
 
 
-def inject_episode_chapters(episode_id: int, *, replace_existing_chapters: bool = False) -> dict:def restore_recovery_transaction(transaction_id: str) -> dict:
+def restore_recovery_transaction(transaction_id: str) -> dict:
     """Restore one preserved source MKV and reset its injection state."""
     from core.backup_manager import restore_recovery_backup
 
@@ -130,7 +130,7 @@ def inject_episode_chapters(episode_id: int, *, replace_existing_chapters: bool 
         CHAPTER_OPERATION_LOCK.release()
 
 
-
+def inject_episode_chapters(episode_id: int, *, replace_existing_chapters: bool = False) -> dict:
     """Safely inject and verify one episode's approved/eligible chapter plan."""
     if not CHAPTER_OPERATION_LOCK.acquire(blocking=False):
         raise RuntimeError("Another chapter review or injection operation is currently running.")

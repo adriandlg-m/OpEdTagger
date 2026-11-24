@@ -108,21 +108,21 @@ export default function Settings({ theme, onThemeChange, settings, preferences, 
     catch (error) { onToast(error.message, 'error'); }
   };
 
-  const openBackupFolder = async (section = 'root') => {  const restoreRecoveryItem = async (item) => {
+  const restoreRecoveryItem = async (item) => {
     const target = item.target_path || item.file_name;
     const accepted = window.confirm(
-      `¿Restaurar el MKV original de "${item.file_name}"?
+      \`¿Restaurar el MKV original de "\${item.file_name}"?
 
 Se reemplazará el archivo de destino con la copia íntegra conservada. El respaldo solo se eliminará después de verificar el archivo restaurado y actualizar el estado del episodio.
 
-Destino: ${target}`
+Destino: \${target}\`
     );
     if (!accepted) return;
     setRestoringTransactionId(item.transaction_id);
     try {
       await api.restoreRecoveryBackup(item.transaction_id);
       await refreshBackupSummary();
-      onToast(`Se restauró el MKV original: ${item.file_name}.`, 'success');
+      onToast(\`Se restauró el MKV original: \${item.file_name}.\`, 'success');
     } catch (error) {
       onToast(error.message || 'No se pudo restaurar el MKV original. El respaldo se conserva.', 'error');
       await refreshBackupSummary();
@@ -131,7 +131,7 @@ Destino: ${target}`
     }
   };
 
-
+  const openBackupFolder = async (section = 'root') => {
     setOpeningBackupFolder(section);
     try {
       await api.openBackupsFolder(section);

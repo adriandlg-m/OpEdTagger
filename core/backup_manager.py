@@ -123,7 +123,7 @@ def _load_manifest_safe(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def get_backup_summary(backup_root: Path) -> dict[str, Any]:def restore_recovery_backup(
+def restore_recovery_backup(
     transaction_id: str,
     backup_root: Path,
     library_root: Path,
@@ -151,7 +151,6 @@ def get_backup_summary(backup_root: Path) -> dict[str, Any]:def restore_recovery
     transaction_dir, manifest = matches[0]
     if manifest.get("phase") != "RECOVERY_REQUIRED":
         raise ValueError("This backup transaction is not marked as requiring recovery.")
-
     episode_id = manifest.get("episode_id")
     if episode_id is None:
         raise ValueError("The recovery manifest does not identify an episode; use manual inspection.")
@@ -168,8 +167,7 @@ def get_backup_summary(backup_root: Path) -> dict[str, Any]:def restore_recovery
     if target.suffix.lower() != ".mkv" or not target.parent.is_dir():
         raise ValueError("The original MKV target folder is unavailable.")
 
-    backup_name = str(manifest.get("backup_file") or "original.mkv")
-    backup_candidate = transaction_dir / backup_name
+    backup_candidate = transaction_dir / str(manifest.get("backup_file") or "original.mkv")
     if backup_candidate.is_symlink():
         raise ValueError("The recovery manifest points to a symbolic-link backup.")
     backup_path = backup_candidate.resolve()
@@ -179,6 +177,7 @@ def get_backup_summary(backup_root: Path) -> dict[str, Any]:def restore_recovery
         raise ValueError("The recovery backup path escapes its transaction folder.") from exc
     if not backup_path.is_file():
         raise FileNotFoundError("The preserved original MKV backup is missing.")
+
     expected_size = int(manifest.get("original_size") or -1)
     expected_fingerprint = str(manifest.get("original_fingerprint") or "")
     if backup_path.stat().st_size != expected_size:
@@ -197,7 +196,7 @@ def get_backup_summary(backup_root: Path) -> dict[str, Any]:def restore_recovery
             raise RuntimeError("The restored MKV failed its integrity check. The recovery backup has been retained.")
 
     # The callback commits the restored fingerprint and resets injection_status.
-    # Do not delete the untouched recovery backup until that DB write succeeds.
+    # Keep the recovery copy until the DB write has succeeded.
     update_episode(int(episode_id), target)
     shutil.rmtree(transaction_dir)
     return {
@@ -210,7 +209,7 @@ def get_backup_summary(backup_root: Path) -> dict[str, Any]:def restore_recovery
     }
 
 
-
+def get_backup_summary(backup_root: Path) -> dict[str, Any]:
     directories = ensure_backup_layout(backup_root)
     root = Path(backup_root).expanduser().resolve()
     recovery_items = []
@@ -245,7 +244,10 @@ def get_backup_summary(backup_root: Path) -> dict[str, Any]:def restore_recovery
                 chapter_archive_count += 1
                 chapter_archive_bytes += archive.stat().st_size
 
-    legacy_backups = [item for item in root.glob("*.backup-*.mkv") if item.is_file() and not item.is_symlink()]
+    legacy_backups = [
+        item for item in root.glob("*.backup-*.mkv")
+        if item.is_file() and not item.is_symlink()
+    ]
     legacy_bytes = sum(item.stat().st_size for item in legacy_backups)
     disk = shutil.disk_usage(root)
     return {
@@ -264,3 +266,4 @@ def get_backup_summary(backup_root: Path) -> dict[str, Any]:def restore_recovery
         "legacy_backup_count": len(legacy_backups),
         "legacy_backup_bytes": legacy_bytes,
     }
+
