@@ -1,6 +1,6 @@
 # Informe de validación técnica
 
-**Versión:** 1.5.0-anilist-series-metadata  
+**Versión:** 1.5.2-recover-cli-workflows  
 **Ámbito:** revisión estática, pruebas unitarias y pruebas de API locales en el entorno de construcción.
 
 ## Comprobaciones realizadas
@@ -8,7 +8,7 @@
 | Comprobación | Resultado |
 |---|---|
 | `python -m compileall -q backend core scripts` | Correcto |
-| `PYTHONPATH=. pytest -q` | 60 pruebas aprobadas en la validación final de este paquete |
+| `PYTHONPATH=. pytest -q` | 72 pruebas aprobadas en GitHub Actions (Python 3.12, Ubuntu) |
 | TypeScript Compiler API parser sobre JS/JSX/TS del frontend | 17 archivos analizados sin errores de sintaxis |
 | Jerarquía recursiva de carpetas de usuario | Verificada con carpetas multinivel y archivos en raíz |
 | Toast fijo y Dashboard con scroll interno | Revisados estáticamente; prueba visual pendiente en Windows |
@@ -18,6 +18,11 @@
 | Atribución AniList | Aviso de fuente incluido en el modal y documentación; revisar requisitos vigentes de marca/atribución antes de una distribución pública |
 | Scroll del árbol de episodios | Se separó el viewport de scroll del contenido flex; prueba visual pendiente en Windows |
 | API local con FastAPI TestClient | Health, dashboard, settings y logs responden correctamente |
+| Frontend `npm ci` | Correcto en GitHub Actions (Node.js 22) |
+| Frontend `npm test` | Correcto en GitHub Actions |
+| Frontend `npm run build` | Correcto en GitHub Actions (Vite) |
+| Contrato del detector OP/ED | Correcto: `core/analyzer.py` sin cambios y prueba de regresión aprobada |
+| Migración de rutas, gestor de plugins y estructura de plantillas | Pruebas unitarias aprobadas en la suite de 72 pruebas |
 | Esquema SQLite y persistencia | Verificado mediante pruebas |
 | Migración JSON dry-run / apply / idempotencia | Verificada con fixture aislado |
 | Restricción de trabajos duplicados por serie | Verificada en SQLite |
@@ -50,12 +55,12 @@ La rama `feature/recover-cli-workflows` incorpora nuevas pruebas para:
 - La extracción segura de ZIP y la recuperación de carpetas de plugins tras una interrupción.
 - Los nombres de capítulos históricos y el idioma `spa/es`, manteniendo backup, verificación y rollback.
 
-**Estado de esta rama:** las pruebas nuevas están escritas, pero todavía no se marcan como aprobadas. El workflow de GitHub Actions ejecutará `compileall`, `pytest`, `npm test` y `npm run build`. La instalación real de herramientas, las descargas y la inyección sobre archivos MKV deben validarse en Windows; no se simulan como pruebas de producción.
+**Estado de esta rama:** en el commit `176835b` el workflow de GitHub Actions completó correctamente `compileall`, `pytest` (72 pruebas), `npm test` y `npm run build`. La instalación real de herramientas, las descargas externas y la inyección sobre archivos MKV deben validarse además en Windows; no se simulan como pruebas de producción.
 
 
 ## Comprobaciones pendientes
 
-- No se completó `npm ci` ni `vite build` en este entorno: `npm ci --offline` no pudo recuperar paquetes que no están en la caché local. Se intentó reutilizar el `node_modules` incluido en el ZIP de referencia, pero contiene dependencias nativas de Windows y no incluye el binario opcional de Rollup para Linux. El ZIP incluye `package-lock.json`; `setup_windows.ps1` ejecutará `npm ci` y `npm run build` en el equipo Windows de destino.
+- La instalación de dependencias del frontend y el build Vite pasaron en CI Linux. Queda pendiente validar el setup completo sobre el equipo Windows de destino.
 - No se realizaron solicitudes reales a AnimeThemes ni descargas externas de templates.
 - No se ejecutó FFmpeg/FFprobe/MKVToolNix contra archivos multimedia reales.
 - La restauración del backup ante fallo se probó con una simulación de los ejecutables, no con una modificación real de MKV.
